@@ -3,11 +3,11 @@ from bs4 import BeautifulSoup
 import re
 import csv
 import time
-import math
+import math 
 import random 
 from typing import List, Dict, Any, Tuple
-import io # Import nécessaire pour la création du CSV en mémoire
-import streamlit as st # <--- NOUVEL IMPORT OBLIGATOIRE
+import io # <--- ESSENTIEL : Import pour la création du CSV en mémoire
+import streamlit as st 
 
 # --- CONFIGURATION PRINCIPALE ---
 # Format: (Nom Lisible du Modèle, URL Complète de sa page Visiodirect)
@@ -67,23 +67,23 @@ BASE_URL: str = "http://www.visiodirect-mobile.com"
 
 
 # --- PARAMÈTRES DE REPRICING (Calculs) --- 
-MARGE_BRUTE = 1.60       # Multiplicateur pour une marge de 60%
-FRAIS_FIXES_MO = 20.0     # Frais de main d'œuvre fixes de 20.0 €
-TVA_COEFFICIENT = 1.20    # Multiplicateur pour une TVA de 20%
+MARGE_BRUTE = 1.60       
+FRAIS_FIXES_MO = 20.0     
+TVA_COEFFICIENT = 1.20    
 
 
 # --- FONCTIONS UTILITAIRES ---
-# @st.cache_data # <--- Optionnel, pour cacher le résultat si la même URL est demandée
+# J'utilise st.cache_data pour que l'opération ne soit pas refaite à chaque fois
+@st.cache_data 
 def clean_price(price_raw: str) -> float:
     """Nettoie une chaîne de prix pour la convertir en nombre flottant (float)."""
     if price_raw == "N/A": return 0.0
-    # Suppression du point (séparateur de milliers) avant de remplacer la virgule par un point (séparateur décimal)
     cleaned_price = price_raw.lower().replace('€', '').replace('ttc', '').replace('.', '').replace(',', '.').strip()
     try: return float(cleaned_price)
     except ValueError: return 0.0
 
-# @st.cache_resource # <--- Optionnel, pour cacher la connexion au site
-def get_soup(url: str, max_retries: int = 3) -> BeautifulSoup | None:
+# @st.cache_resource # Utile pour les connexions, mais non nécessaire ici
+def get_soup(url: str, max_retries: int = 3, log_func=st.warning) -> BeautifulSoup | None:
     """Télécharge l'URL et retourne l'objet Beautiful Soup, avec des tentatives en cas d'échec."""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     for attempt in range(max_retries):
@@ -92,8 +92,8 @@ def get_soup(url: str, max_retries: int = 3) -> BeautifulSoup | None:
             response.raise_for_status() 
             return BeautifulSoup(response.text, 'html.parser')
         except requests.exceptions.RequestException as e:
-            # Remplacement des print() par des st.warning/st.error pour l'interface Streamlit
-            st.warning(f"    [TENTATIVE {attempt + 1}/{max_retries}] Échec de la requête. Erreur: {e}")
+            # Utilise le log Streamlit fourni (st.warning)
+            log_func(f"    [TENTATIVE {attempt + 1}/{max_retries}] Échec de la requête. Erreur: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
                 continue
@@ -101,11 +101,11 @@ def get_soup(url: str, max_retries: int = 3) -> BeautifulSoup | None:
 
 # --- FONCTION PRINCIPALE DE SCRAPING DES COMPOSANTS (MODIFIÉE) ---
 
-def scrape_model_page_streamlit(model_name: str, model_url: str, status_placeholder: st.DeltaGenerator) -> List[Dict[str, Any]]:
+# J'ai retiré le placeholder de la fonction pour éviter le conflit
+def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> List[Dict[str, Any]]:
     """Visite la page du modèle et extrait tous les composants (produits) pour l'interface Streamlit."""
     
-    # Utilisez le placeholder Streamlit pour afficher le statut
-    status_placeholder.markdown(f"**🔎 Démarrage du scraping des composants pour {model_name}...**")
+    log_func(f"**🔎 Démarrage du scraping des composants pour {model_name}...**")
     
     all_products_for_model: List[Dict[str, Any]] = []
     current_page = 1
@@ -113,26 +113,26 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, status_placehol
     
     while current_page <= total_pages:
         url = model_url.replace(".html", f"-p{current_page}.html") if current_page > 1 else model_url
-        status_placeholder.text(f"  -> Page {current_page}/{total_pages} : {url}")
+        log_func(f"  -> Page {current_page}/{total_pages} : {url}")
         
-        soup = get_soup(url)
+        # Le log_func (log_status.warning) est passé ici
+        soup = get_soup(url, log_func=log_func) 
         if not soup: break
             
         products_on_page = []
         product_containers = soup.select(PRODUCT_CONTAINER_SELECTOR)
 
         if not product_containers and current_page == 1:
-            status_placeholder.warning(f"  [AVERTISSEMENT] Aucun composant trouvé pour {model_name} (Page 1).")
+            log_func(f"  [AVERTISSEMENT] Aucun composant trouvé pour {model_name} (Page 1).")
             break 
         
-        # Extraction des données (le reste de la boucle reste inchangé)
+        # Extraction des données
         for container in product_containers:
             try:
                 name_tag = container.select_one('h3') or container.select_one('h4')
                 name = name_tag.text.strip() if name_tag else "N/A"
                 
                 link_tag = container.find('a', href=True)
-                # Correction pour gérer les liens relatifs/absolus
                 link = BASE_URL + link_tag['href'] if link_tag and link_tag['href'].startswith('/') else link_tag['href'] if link_tag else "N/A"
                 
                 price_tag = container.select_one('.price_item') or container.select_one('.prix')
@@ -153,7 +153,7 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, status_placehol
                     'link': link
                 })
             except Exception as e: 
-                 st.error(f"    [ERREUR Extraction] Échec sur un produit de la page {current_page}: {e}")
+                 log_func(f"    [ERREUR Extraction] Échec sur un produit de la page {current_page}: {e}")
                  continue
 
         # Gestion de la pagination 
@@ -170,25 +170,26 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, status_placehol
                 total_pages = max_page
             
             if total_pages > 1:
-                status_placeholder.info(f"  [INFO] **{total_pages}** pages de composants trouvées pour ce modèle.")
+                log_func(f"  [INFO] **{total_pages}** pages de composants trouvées pour ce modèle.")
                 
         if not products_on_page and current_page > 1: break 
             
         all_products_for_model.extend(products_on_page)
-        status_placeholder.success(f"  [SUCCÈS] **{len(products_on_page)}** composants extraits (Total : {len(all_products_for_model)})")
+        log_func(f"  [SUCCÈS] **{len(products_on_page)}** composants extraits (Total : {len(all_products_for_model)})")
         
         current_page += 1
         time.sleep(random.uniform(1.5, 3.5)) 
         
     return all_products_for_model
 
-# --- EXPORTATION ET TRI (MODIFIÉE POUR RETOURNER UN TEXTE CSV) ---
+# --- EXPORTATION ET TRI ---
 
+@st.cache_data
 def process_and_get_csv_text(data: List[Dict[str, Any]]) -> str | None:
-    """Effectue le Repricing, formate les prix, trie, et retourne le contenu CSV."""
+    # ... (fonction inchangée, utilise io.StringIO)
     if not data: return None
 
-    # --- 1. CALCUL ET FORMATAGE DES PRIX (Identique à l'original) ---
+    # --- 1. CALCUL ET FORMATAGE DES PRIX ---
     for item in data:
         price_float = item['price_float']
         
@@ -196,7 +197,6 @@ def process_and_get_csv_text(data: List[Dict[str, Any]]) -> str | None:
         prix_intermediaire = prix_marge + FRAIS_FIXES_MO
         prix_final_ttc = math.ceil(prix_intermediaire * TVA_COEFFICIENT)
         
-        # Formatage avec la virgule pour le décimal
         item['Prix Fournisseur HT'] = f"{round(price_float, 2):.2f}".replace('.', ',') + " €"
         item['Marge Brute HT'] = f"{round(prix_marge, 2):.2f}".replace('.', ',') + " €"
         item['Prix Intermédiaire + M.O. HT'] = f"{round(prix_intermediaire, 2):.2f}".replace('.', ',') + " €"
@@ -223,8 +223,8 @@ def process_and_get_csv_text(data: List[Dict[str, Any]]) -> str | None:
     ]
     fieldnames += sorted([k for k in all_keys if k not in fieldnames])
     
-    # Utilisation de StringIO pour créer le fichier en mémoire (sans écrire sur disque)
     output = io.StringIO()
+    # Utilisation du point-virgule (delimiter=';') pour l'export Excel français
     writer = csv.DictWriter(output, fieldnames=fieldnames, delimiter=';')
     writer.writeheader()
     writer.writerows(data)
@@ -232,11 +232,10 @@ def process_and_get_csv_text(data: List[Dict[str, Any]]) -> str | None:
     return output.getvalue()
 
 
-# --- INTERFACE ET EXECUTION PRINCIPALE STREAMLIT ---
+# --- INTERFACE ET EXECUTION PRINCIPALE STREAMLIT (MODIFIÉE) ---
 
 def main():
     
-    # Configuration de la page Streamlit
     st.set_page_config(
         page_title="Scraper Catalogue iPhone", 
         layout="centered",
@@ -246,40 +245,42 @@ def main():
     st.title("🤖 Catalogue iPhone Visiodirect")
     st.caption("Lancez le scraping pour extraire les données, appliquer le calcul de prix et obtenir le fichier CSV.")
     
-    # Placeholder pour les messages de statut en temps réel
-    status_placeholder = st.empty()
-    
     # Bouton de lancement
     if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
         toutes_les_donnees: List[Dict[str, Any]] = []
         
-        status_placeholder.info("Démarrage du processus. Cela peut prendre plusieurs minutes (plus de 30 modèles).")
+        st.info("Démarrage du processus. Cela peut prendre plusieurs minutes (plus de 30 modèles).")
         
-        # Utilisation du spinner pour un feedback visuel
-        with st.spinner('Scraping et traitement en cours...'):
+        # UTILISATION DU NOUVEAU st.status POUR UN LOG ROBUSTE
+        with st.status('Scraping et traitement en cours...', expanded=True) as log_status:
             
             total_models = len(MODEL_URLS)
-            progress_bar = st.progress(0)
+            
+            # La barre de progression est maintenant dans la colonne de droite pour éviter les conflits d'affichage
+            col1, col2 = st.columns([4, 1])
+            progress_bar = col1.progress(0, text="Progression globale...")
             
             for index, (model_name, model_url) in enumerate(MODEL_URLS):
                 
                 # Mise à jour de la barre de progression
-                progress_bar.progress((index + 1) / total_models)
+                progress_bar.progress((index + 1) / total_models, text=f"Modèle {index+1}/{total_models} : {model_name}")
                 
                 # Attente entre les modèles (conservé pour éthique)
                 time.sleep(random.uniform(2.0, 5.0)) 
                 
-                # Scraping du modèle actuel
-                data_modele = scrape_model_page_streamlit(model_name, model_url, status_placeholder)
+                # Le log_status.info/warning est passé à la fonction
+                data_modele = scrape_model_page_streamlit(model_name, model_url, log_status.info)
                 toutes_les_donnees.extend(data_modele)
 
             # Traitement final et obtention du texte CSV
+            log_status.update(label="Traitement final des données...", state="running", expanded=True)
             csv_text = process_and_get_csv_text(toutes_les_donnees)
         
-        status_placeholder.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants extraits.")
+        # FIN DU BLOC st.status
+        
+        st.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants extraits.")
         
         if csv_text:
-            # Bouton de téléchargement du CSV
             st.download_button(
                 label="📥 Télécharger le Fichier CSV",
                 data=csv_text,
