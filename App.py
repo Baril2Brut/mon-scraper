@@ -9,34 +9,43 @@ from typing import List, Dict, Any, Tuple
 import io 
 import streamlit as st 
 import pandas as pd 
-# La bibliothèque openpyxl est maintenant installée via requirements.txt
+import gspread
+import gspread_dataframe as gd
+from datetime import datetime 
 
-# --- CONFIGURATION INITIALE DES LIENS ---
-# Cette liste sert de base si la session est vide
+# --- CONFIGURATION PRINCIPALE ET SECRETS CLOUD ---
+
+# Cette liste sert de base uniquement la première fois que l'application est lancée.
 DEFAULT_MODEL_URLS: List[Tuple[str, str]] = [
     # iPhone 15 Series
     ("iPhone 15 Pro Max", "http://www.visiodirect-mobile.com/iphone-15-pro-max-ssf1301-fss2-fcss4.html"),
     ("iPhone 15 Pro", "http://www.visiodirect-mobile.com/iphone-15-pro-ssf1300-fss2-fcss4.html"),
     ("iPhone 15 Plus", "http://www.visiodirect-mobile.com/iphone-15-plus-ssf1299-fss2-fcss4.html"),
     ("iPhone 15", "http://www.visiodirect-mobile.com/iphone-15-ssf1298-fss2-fcss4.html"),
-    # ... (les autres liens par défaut)
+    # iPhone 14 Series (À compléter ou supprimer après importation)
+    ("iPhone 14 Pro Max", "http://www.visiodirect-mobile.com/iphone-14-pro-max-ssf1297-fss2-fcss4.html"),
+    ("iPhone 14 Pro", "http://www.visiodirect-mobile.com/iphone-14-pro-ssf1296-fss2-fcss4.html"),
+    ("iPhone 14 Plus", "http://www.visiodirect-mobile.com/iphone-14-plus-ssf1086-fss2-fcss4.html"),
+    ("iPhone 14", "http://www.visiodirect-mobile.com/iphone-14-ssf1085-fss2-fcss4.html"),
 ] 
 
-# SÉLECTEUR DE PRODUIT CONFIRMÉ
 PRODUCT_CONTAINER_SELECTOR: str = 'div.cadre_prod'
 BASE_URL: str = "http://www.visiodirect-mobile.com"
+GSHEET_NAME: str = "Resultats_Scraping_iPhone_Automatise" # <--- IMPORTANT : CHANGEZ CECI PAR LE NOM EXACT DE VOTRE FEUILLE GOOGLE SHEET
 
-# --- FONCTIONS UTILITAIRES (Inchangées) ---
+
+# --- FONCTIONS UTILITAIRES DE BASE ---
+
 @st.cache_data 
 def clean_price(price_raw: str) -> float:
-    # ... (fonction inchangée)
+    """Nettoie une chaîne de prix pour la convertir en nombre flottant (float)."""
     if price_raw == "N/A": return 0.0
     cleaned_price = price_raw.lower().replace('€', '').replace('ttc', '').replace('.', '').replace(',', '.').strip()
     try: return float(cleaned_price)
     except ValueError: return 0.0
 
 def get_soup(url: str, max_retries: int = 3, log_func=st.warning) -> BeautifulSoup | None:
-    # ... (fonction inchangée)
+    """Télécharge l'URL et retourne l'objet Beautiful Soup, avec des tentatives en cas d'échec."""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     for attempt in range(max_retries):
         try:
@@ -51,7 +60,7 @@ def get_soup(url: str, max_retries: int = 3, log_func=st.warning) -> BeautifulSo
     return None
 
 def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> List[Dict[str, Any]]:
-    # ... (fonction inchangée, code de scraping)
+    """Visite la page du modèle et extrait tous les composants (produits)."""
     
     log_func(f"**🔎 Démarrage du scraping des composants pour {model_name}...**")
     
@@ -68,7 +77,6 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> Li
             
         products_on_page = []
         product_containers = soup.select(PRODUCT_CONTAINER_SELECTOR)
-
         if not product_containers and current_page == 1:
             log_func(f"  [AVERTISSEMENT] Aucun composant trouvé pour {model_name} (Page 1).")
             break 
@@ -104,6 +112,7 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> Li
                  continue
 
         # Gestion de la pagination 
+        # (Logique de pagination complète conservée ici)
         if current_page == 1:
             pagination_links = soup.select('div.pagination a')
             max_page = 1
@@ -129,9 +138,12 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> Li
         
     return all_products_for_model
 
+
+# --- EXPORTATION ET TRI (MAJ avec paramètres dynamiques) ---
+
 @st.cache_data
 def process_and_get_csv_text(data: List[Dict[str, Any]], marge_brute: float, frais_fixes_mo: float, tva_coeff: float) -> str | None:
-    # ... (fonction de traitement final inchangée)
+    """Applique les calculs de prix basés sur les paramètres utilisateur et génère le CSV en mémoire."""
     if not data: return None
 
     # --- 1. CALCUL ET FORMATAGE DES PRIX ---
@@ -149,12 +161,11 @@ def process_and_get_csv_text(data: List[Dict[str, Any]], marge_brute: float, fra
         item['Prix Client TTC'] = f"{prix_final_ttc:.2f}".replace('.', ',') + " €" 
         
         del item['price_float']
+        del item['price_raw'] # Suppression pour utiliser le prix formaté
 
     data.sort(key=lambda x: (str(x.get('marque_modele', '')).lower(), str(x.get('nom_composant', '')).lower()))
 
     # --- 2. CRÉATION DU CSV EN MÉMOIRE ---
-    all_keys = set()
-    for d in data: all_keys.update(d.keys())
     
     fieldnames = [
         'marque_modele', 
@@ -164,24 +175,25 @@ def process_and_get_csv_text(data: List[Dict[str, Any]], marge_brute: float, fra
         'Marge Brute HT',      
         'Prix Intermédiaire + M.O. HT', 
         'Prix Client TTC',     
-        'price_raw', 
         'link'
     ]
-    fieldnames += sorted([k for k in all_keys if k not in fieldnames])
     
     output = io.StringIO()
+    # On utilise le point-virgule comme séparateur (standard Excel/FR)
     writer = csv.DictWriter(output, fieldnames=fieldnames, delimiter=';')
     writer.writeheader()
     writer.writerows(data)
     
     return output.getvalue()
 
+
+# --- FONCTIONS D'IMPORT/EXPORT DE LIENS (CSV/EXCEL) ---
+
 def download_links_csv(model_links: List[Tuple[str, str]]) -> str:
-    """Crée et retourne le contenu CSV des liens de modèles."""
+    """Crée et retourne le contenu CSV des liens de modèles (pour l'export)."""
     df = pd.DataFrame(model_links, columns=['Nom du Modèle', 'URL de la Catégorie'])
     return df.to_csv(index=False, sep=';', encoding='utf-8-sig')
 
-# --- FONCTION MODIFIÉE POUR GÉRER CSV ET EXCEL (.xlsx) ---
 def upload_links_file(uploaded_file: io.BytesIO | None) -> List[Tuple[str, str]] | None:
     """Traite le fichier (CSV ou Excel) téléversé et retourne la liste des liens."""
     if uploaded_file is None:
@@ -191,18 +203,15 @@ def upload_links_file(uploaded_file: io.BytesIO | None) -> List[Tuple[str, str]]
     
     try:
         if file_name.endswith('.csv'):
-            # Lecture CSV : Séparateur point-virgule pour Excel français
+            # Lecture CSV : Séparateur point-virgule
             df = pd.read_csv(uploaded_file, sep=';', encoding='utf-8-sig')
-            
         elif file_name.endswith('.xlsx'):
             # Lecture Excel : pandas gère la lecture de la première feuille
             df = pd.read_excel(uploaded_file)
-            
         else:
-            st.error("Format de fichier non pris en charge. Veuillez utiliser un fichier CSV (avec séparateur point-virgule) ou Excel (.xlsx).")
+            st.error("Format de fichier non pris en charge. Veuillez utiliser un fichier CSV (séparateur point-virgule) ou Excel (.xlsx).")
             return None
         
-        # Validation des colonnes (doit avoir au moins deux colonnes)
         if len(df.columns) < 2:
             st.error("Le fichier doit contenir les données sur deux colonnes : 1) Nom du Modèle et 2) URL de la Catégorie.")
             return None
@@ -210,10 +219,8 @@ def upload_links_file(uploaded_file: io.BytesIO | None) -> List[Tuple[str, str]]
         # Renomme les colonnes pour s'assurer que l'extraction est correcte
         df.columns = ['Nom du Modèle', 'URL de la Catégorie'] + list(df.columns[2:])
         
-        # Sélectionne les colonnes nécessaires et convertit en liste de tuples (Nom, URL)
         new_links = list(df[['Nom du Modèle', 'URL de la Catégorie']].itertuples(index=False, name=None))
         
-        # Filtrage pour enlever les entrées invalides ou vides
         valid_new_links = [
             (str(name).strip(), str(url).strip())
             for name, url in new_links
@@ -227,7 +234,56 @@ def upload_links_file(uploaded_file: io.BytesIO | None) -> List[Tuple[str, str]]
         st.error(f"Erreur lors du traitement du fichier. Veuillez vérifier la structure (Nom et URL en colonnes 1 et 2). Détail de l'erreur : {e}")
         return None
 
-# --- INTERFACE ET EXECUTION PRINCIPALE STREAMLIT (Mise à jour pour le file_uploader) ---
+
+# --- FONCTIONS DE SAUVEGARDE GOOGLE SHEETS (Remplace rclone) ---
+
+@st.cache_resource 
+def get_gsheet_client():
+    """Authentifie et retourne le client gspread en utilisant les secrets Streamlit."""
+    try:
+        # Tente de se connecter en utilisant le contenu du JSON de la clé de service
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        return gc
+    except Exception as e:
+        st.error(f"❌ Échec de la connexion à Google Sheets. Avez-vous configuré les secrets ('gcp_service_account') ? Erreur : {e}")
+        return None
+
+def save_to_google_sheet(csv_text: str):
+    """Convertit le CSV en DataFrame et l'écrit automatiquement dans la Google Sheet."""
+    gc = get_gsheet_client()
+    if not gc: return False
+
+    try:
+        # 1. Conversion du CSV (en mémoire) en DataFrame Pandas
+        data_io = io.StringIO(csv_text)
+        df = pd.read_csv(data_io, sep=';', encoding='utf-8-sig')
+
+        # 2. Ouverture de la Google Sheet
+        spreadsheet_name = GSHEET_NAME # Utilise la constante définie en haut
+        sh = gc.open(spreadsheet_name)
+        worksheet = sh.get_worksheet(0) # On utilise la première feuille (index 0)
+
+        # 3. Ajout d'une colonne de date/heure de l'export
+        df.insert(0, 'Date Export', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        
+        # 4. Écrit le DataFrame dans la feuille de calcul (remplace le contenu existant)
+        gd.set_with_dataframe(worksheet, df) 
+        
+        st.success(f"💾 SAUVEGARDE AUTOMATIQUE RÉUSSIE ! Les données ont été écrites dans la Google Sheet : **{spreadsheet_name}**.")
+        st.markdown(f"**[Cliquez ici pour voir les résultats]({sh.url})**")
+
+        return True
+
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error(f"❌ Fichier Google Sheet introuvable. Nom : '{spreadsheet_name}'. Assurez-vous qu'il est partagé avec le compte de service.")
+    except gspread.exceptions.WorksheetNotFound:
+        st.error(f"❌ Feuille non trouvée. Assurez-vous que la première feuille de '{spreadsheet_name}' existe.")
+    except Exception as e:
+        st.error(f"❌ Erreur lors de l'écriture dans Google Sheets : {e}")
+        return False
+
+
+# --- INTERFACE ET EXECUTION PRINCIPALE STREAMLIT ---
 
 def main():
     
@@ -245,10 +301,9 @@ def main():
     st.caption("Gérez vos liens et lancez le scraping.")
     
     
-    # --- 2. MENU LATÉRAL : PARAMÈTRES DE CALCUL (Inchangé) ---
+    # --- 2. MENU LATÉRAL : PARAMÈTRES DE CALCUL ---
     with st.sidebar:
         st.header("⚙️ Ajuster les Paramètres")
-        st.caption("Modifiez ces valeurs pour recalculer les prix finaux.")
         
         marge_brute = st.slider(
             "Coefficient de Marge Brute", 
@@ -274,31 +329,28 @@ def main():
     
     # --- 3. ZONE PRINCIPALE : GESTION DES LIENS ---
     st.subheader("🔗 Liens de Catégories à Scraper")
-    st.caption("Modifiez, ajoutez manuellement, ou utilisez les boutons ci-dessous pour importer/exporter la liste en masse.")
+    st.caption("Modifiez, ajoutez, ou utilisez l'import/export pour la gestion de masse.")
 
-    # Boutons d'Import/Export dans deux colonnes
     col_dl, col_ul = st.columns(2)
 
-    # EXPORTATION DES LIENS (pour les modifier sur l'ordinateur)
+    # EXPORTATION
     csv_links = download_links_csv(st.session_state['model_links'])
     col_dl.download_button(
         label="⬇️ Exporter les liens (CSV)",
         data=csv_links,
         file_name='liens_modeles_a_modifier.csv',
         mime='text/csv',
-        help="Téléchargez ce fichier, ajoutez-y toutes vos nouvelles lignes, puis réimportez-le."
+        help="Téléchargez pour ajouter en masse sur votre PC/Mac."
     )
 
-    # IMPORTATION DES LIENS (téléversement du fichier mis à jour)
+    # IMPORTATION (accepte CSV et Excel)
     uploaded_file = col_ul.file_uploader(
         "Importer des liens (CSV ou Excel)", 
-        # On accepte maintenant CSV et EXCEL
         type=['csv', 'xlsx'], 
         key="uploader_links",
-        help="Téléversez le fichier (CSV séparé par ';', ou Excel .xlsx). La première colonne doit contenir le Nom, la deuxième l'URL."
+        help="La première colonne doit contenir le Nom, la deuxième l'URL."
     )
 
-    # Logique d'importation
     if uploaded_file is not None:
         new_links = upload_links_file(uploaded_file)
         if new_links:
@@ -306,12 +358,12 @@ def main():
             st.rerun() 
 
 
-    # Tableau éditable (avec les données mises à jour si importées)
+    # Tableau éditable 
     edited_links = st.data_editor(
         st.session_state['model_links'],
         column_config={
             0: st.column_config.TextColumn("Nom du Modèle", help="Ex: iPhone 15 Pro Max", width="medium"),
-            1: st.column_config.TextColumn("URL de la Catégorie", help="Lien complet de la catégorie sur visiodirect-mobile.com", width="large"),
+            1: st.column_config.TextColumn("URL de la Catégorie", help="Lien complet...", width="large"),
         },
         num_rows="dynamic", 
         hide_index=True,
@@ -320,7 +372,7 @@ def main():
     
     st.session_state['model_links'] = edited_links
 
-    # Filtration des lignes vides ou non valides
+    # Filtration des lignes valides
     urls_to_scrape = st.session_state['model_links']
     valid_urls_to_scrape = [ 
         (name, url) for name, url in urls_to_scrape 
@@ -330,7 +382,7 @@ def main():
     st.info(f"**{len(valid_urls_to_scrape)}** liens valides seront scannés.")
 
 
-    # --- 4. BOUTON D'EXÉCUTION (Inchangé) ---
+    # --- 4. BOUTON D'EXÉCUTION ---
     if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
         if not valid_urls_to_scrape:
             st.error("Veuillez ajouter au moins un lien valide pour commencer le scraping.")
@@ -363,17 +415,14 @@ def main():
                 tva_coeff
             )
         
-        # --- 5. RÉSULTATS (Inchangé) ---
+        # --- 5. RÉSULTATS : SAUVEGARDE AUTOMATIQUE (FINALE) ---
         
         st.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants extraits.")
         
         if csv_text:
-            st.download_button(
-                label="📥 Télécharger le Fichier CSV",
-                data=csv_text,
-                file_name='resultats_catalogue_iphone.csv',
-                mime='text/csv'
-            )
+            # Remplace la fonction rclone / le téléchargement manuel
+            save_to_google_sheet(csv_text) 
+            
             st.balloons()
         else:
             st.error("Aucune donnée n'a pu être extraite.")
