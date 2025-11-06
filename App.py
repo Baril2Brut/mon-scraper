@@ -6,74 +6,32 @@ import time
 import math 
 import random 
 from typing import List, Dict, Any, Tuple
-import io # <--- ESSENTIEL : Import pour la création du CSV en mémoire
+import io 
 import streamlit as st 
 
-# --- CONFIGURATION PRINCIPALE ---
-# Format: (Nom Lisible du Modèle, URL Complète de sa page Visiodirect)
-MODEL_URLS: List[Tuple[str, str]] = [
+# --- CONFIGURATION INITIALE DES LIENS ---
+# Cette liste n'est utilisée que la première fois que l'utilisateur lance l'application.
+# Ensuite, la liste est stockée et modifiée par l'utilisateur via le tableau interactif.
+DEFAULT_MODEL_URLS: List[Tuple[str, str]] = [
     # iPhone 15 Series
     ("iPhone 15 Pro Max", "http://www.visiodirect-mobile.com/iphone-15-pro-max-ssf1301-fss2-fcss4.html"),
     ("iPhone 15 Pro", "http://www.visiodirect-mobile.com/iphone-15-pro-ssf1300-fss2-fcss4.html"),
     ("iPhone 15 Plus", "http://www.visiodirect-mobile.com/iphone-15-plus-ssf1299-fss2-fcss4.html"),
     ("iPhone 15", "http://www.visiodirect-mobile.com/iphone-15-ssf1298-fss2-fcss4.html"),
-    # iPhone 14 Series
+    # iPhone 14 Series (Raccourci pour l'exemple)
     ("iPhone 14 Pro Max", "http://www.visiodirect-mobile.com/iphone-14-pro-max-ssf1297-fss2-fcss4.html"),
     ("iPhone 14 Pro", "http://www.visiodirect-mobile.com/iphone-14-pro-ssf1296-fss2-fcss4.html"),
     ("iPhone 14 Plus", "http://www.visiodirect-mobile.com/iphone-14-plus-ssf1086-fss2-fcss4.html"),
     ("iPhone 14", "http://www.visiodirect-mobile.com/iphone-14-ssf1085-fss2-fcss4.html"),
-    # iPhone 13 Series
-    ("iPhone 13 Pro Max", "http://www.visiodirect-mobile.com/iphone-13-pro-max-ssf1295-fss2-fcss4.html"),
-    ("iPhone 13 Pro", "http://www.visiodirect-mobile.com/iphone-13-pro-ssf1294-fss2-fcss4.html"),
-    ("iPhone 13 mini", "http://www.visiodirect-mobile.com/iphone-13-mini-ssf1052-fss2-fcss4.html"),
-    ("iPhone 13", "http://www.visiodirect-mobile.com/iphone-13-ssf1051-fss2-fcss4.html"),
-    # iPhone 12 Series
-    ("iPhone 12 Pro Max", "http://www.visiodirect-mobile.com/iphone-12-pro-max-ssf981-fss2-fcss4.html"),
-    ("iPhone 12 (6.1)", "http://www.visiodirect-mobile.com/iphone-12-taille-61-ssf980-fss2-fcss4.html"),
-    ("iPhone 12 mini", "http://www.visiodirect-mobile.com/iphone-12-mini-ssf979-fss2-fcss4.html"),
-    # iPhone 11 Series
-    ("iPhone 11 Pro Max", "http://www.visiodirect-mobile.com/iphone-11-pro-max-ssf867-fss2-fcss4.html"),
-    ("iPhone 11 Pro", "http://www.visiodirect-mobile.com/iphone-11-pro-ssf866-fss2-fcss4.html"),
-    ("iPhone 11", "http://www.visiodirect-mobile.com/iphone-11-ssf863-fss2-fcss4.html"),
-    # Anciens Modèles
-    ("iPhone XS Max", "http://www.visiodirect-mobile.com/iphone-xs-max-ssf691-fss2-fcss4.html"),
-    ("iPhone XR", "http://www.visiodirect-mobile.com/iphone-xr-ssf690-fss2-fcss4.html"),
-    ("iPhone XS", "http://www.visiodirect-mobile.com/iphone-xs-ssf689-fss2-fcss4.html"),
-    ("iPhone X", "http://www.visiodirect-mobile.com/iphone-x-ssf387-fss2-fcss4.html"),
-    ("iPhone 8 Plus", "http://www.visiodirect-mobile.com/iphone-8-plus-ssf386-fss2-fcss4.html"),
-    ("iPhone 8", "http://www.visiodirect-mobile.com/iphone-8-ssf385-fss2-fcss4.html"),
-    ("iPhone 7 Plus", "http://www.visiodirect-mobile.com/iphone-7-plus-ssf289-fss2-fcss4.html"),
-    ("iPhone 7", "http://www.visiodirect-mobile.com/iphone-7-ssf288-fss2-fcss4.html"),
-    ("iPhone 6S Plus", "http://www.visiodirect-mobile.com/iphone-6s-plus-ssf159-fss2-fcss4.html"),
-    ("iPhone 6S", "http://www.visiodirect-mobile.com/iphone-6s-ssf158-fss2-fcss4.html"),
-    ("iPhone 6 Plus", "http://www.visiodirect-mobile.com/iphone-6-plus-ssf141-fss2-fcss4.html"),
-    ("iPhone 6", "http://www.visiodirect-mobile.com/iphone-6-ssf9-fss2-fcss4.html"),
-    ("iPhone SE (2020)", "http://www.visiodirect-mobile.com/iphone-se-2020-ssf194-fss2-fcss4.html"),
-    ("iPhone 5C", "http://www.visiodirect-mobile.com/iphone-5c-ssf8-fss2-fcss4.html"),
-    ("iPhone SE", "http://www.visiodirect-mobile.com/iphone-5se-ssf724-fss2-fcss4.html"),
-    ("iPhone 5S", "http://www.visiodirect-mobile.com/iphone-5s-ssf7-fss2-fcss4.html"),
-    ("iPhone 5", "http://www.visiodirect-mobile.com/iphone-5-ssf6-fss2-fcss4.html"),
-    ("iPhone 4S", "http://www.visiodirect-mobile.com/iphone-4s-ssf5-fss2-fcss4.html"),
-    ("iPhone 4", "http://www.visiodirect-mobile.com/iphone-4-ssf4-fss2-fcss4.html"),
-    ("iPhone 3GS", "http://www.visiodirect-mobile.com/iphone-3gs-ssf11-fss2-fcss4.html"),
-    ("iPhone 3G", "http://www.visiodirect-mobile.com/iphone-3g-ssf10-fss2-fcss4.html"),
+    # Ajoutez d'autres modèles ici si vous le souhaitez pour l'initialisation
 ] 
 
 # SÉLECTEUR DE PRODUIT CONFIRMÉ
 PRODUCT_CONTAINER_SELECTOR: str = 'div.cadre_prod'
-
-# URL de base du site
 BASE_URL: str = "http://www.visiodirect-mobile.com"
 
 
-# --- PARAMÈTRES DE REPRICING (Calculs) --- 
-MARGE_BRUTE = 1.60       
-FRAIS_FIXES_MO = 20.0     
-TVA_COEFFICIENT = 1.20    
-
-
 # --- FONCTIONS UTILITAIRES ---
-# J'utilise st.cache_data pour que l'opération ne soit pas refaite à chaque fois
 @st.cache_data 
 def clean_price(price_raw: str) -> float:
     """Nettoie une chaîne de prix pour la convertir en nombre flottant (float)."""
@@ -82,7 +40,6 @@ def clean_price(price_raw: str) -> float:
     try: return float(cleaned_price)
     except ValueError: return 0.0
 
-# @st.cache_resource # Utile pour les connexions, mais non nécessaire ici
 def get_soup(url: str, max_retries: int = 3, log_func=st.warning) -> BeautifulSoup | None:
     """Télécharge l'URL et retourne l'objet Beautiful Soup, avec des tentatives en cas d'échec."""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
@@ -92,16 +49,12 @@ def get_soup(url: str, max_retries: int = 3, log_func=st.warning) -> BeautifulSo
             response.raise_for_status() 
             return BeautifulSoup(response.text, 'html.parser')
         except requests.exceptions.RequestException as e:
-            # Utilise le log Streamlit fourni (st.warning)
             log_func(f"    [TENTATIVE {attempt + 1}/{max_retries}] Échec de la requête. Erreur: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
                 continue
     return None
 
-# --- FONCTION PRINCIPALE DE SCRAPING DES COMPOSANTS (MODIFIÉE) ---
-
-# J'ai retiré le placeholder de la fonction pour éviter le conflit
 def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> List[Dict[str, Any]]:
     """Visite la page du modèle et extrait tous les composants (produits) pour l'interface Streamlit."""
     
@@ -110,12 +63,12 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> Li
     all_products_for_model: List[Dict[str, Any]] = []
     current_page = 1
     total_pages = 1 
+    # ... (Le reste du code de scraping est le même que la version corrigée)
     
     while current_page <= total_pages:
         url = model_url.replace(".html", f"-p{current_page}.html") if current_page > 1 else model_url
         log_func(f"  -> Page {current_page}/{total_pages} : {url}")
         
-        # Le log_func (log_status.warning) est passé ici
         soup = get_soup(url, log_func=log_func) 
         if not soup: break
             
@@ -182,21 +135,22 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> Li
         
     return all_products_for_model
 
-# --- EXPORTATION ET TRI ---
+# --- EXPORTATION ET TRI (MAJ avec paramètres dynamiques) ---
 
 @st.cache_data
-def process_and_get_csv_text(data: List[Dict[str, Any]]) -> str | None:
-    # ... (fonction inchangée, utilise io.StringIO)
+def process_and_get_csv_text(data: List[Dict[str, Any]], marge_brute: float, frais_fixes_mo: float, tva_coeff: float) -> str | None:
+    """Applique les calculs de prix basés sur les paramètres utilisateur et génère le CSV."""
     if not data: return None
 
     # --- 1. CALCUL ET FORMATAGE DES PRIX ---
     for item in data:
         price_float = item['price_float']
         
-        prix_marge = price_float * MARGE_BRUTE
-        prix_intermediaire = prix_marge + FRAIS_FIXES_MO
-        prix_final_ttc = math.ceil(prix_intermediaire * TVA_COEFFICIENT)
+        prix_marge = price_float * marge_brute
+        prix_intermediaire = prix_marge + frais_fixes_mo
+        prix_final_ttc = math.ceil(prix_intermediaire * tva_coeff)
         
+        # Formatage des colonnes
         item['Prix Fournisseur HT'] = f"{round(price_float, 2):.2f}".replace('.', ',') + " €"
         item['Marge Brute HT'] = f"{round(prix_marge, 2):.2f}".replace('.', ',') + " €"
         item['Prix Intermédiaire + M.O. HT'] = f"{round(prix_intermediaire, 2):.2f}".replace('.', ',') + " €"
@@ -224,7 +178,6 @@ def process_and_get_csv_text(data: List[Dict[str, Any]]) -> str | None:
     fieldnames += sorted([k for k in all_keys if k not in fieldnames])
     
     output = io.StringIO()
-    # Utilisation du point-virgule (delimiter=';') pour l'export Excel français
     writer = csv.DictWriter(output, fieldnames=fieldnames, delimiter=';')
     writer.writeheader()
     writer.writerows(data)
@@ -232,51 +185,118 @@ def process_and_get_csv_text(data: List[Dict[str, Any]]) -> str | None:
     return output.getvalue()
 
 
-# --- INTERFACE ET EXECUTION PRINCIPALE STREAMLIT (MODIFIÉE) ---
+# --- INTERFACE ET EXECUTION PRINCIPALE STREAMLIT ---
 
 def main():
     
     st.set_page_config(
         page_title="Scraper Catalogue iPhone", 
         layout="centered",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="expanded" # Le menu sera ouvert par défaut
     )
 
+    # --- 1. GESTION DE L'ÉTAT DE SESSION (Sauvegarde des liens) ---
+    if 'model_links' not in st.session_state:
+        st.session_state['model_links'] = DEFAULT_MODEL_URLS
+        
     st.title("🤖 Catalogue iPhone Visiodirect")
-    st.caption("Lancez le scraping pour extraire les données, appliquer le calcul de prix et obtenir le fichier CSV.")
+    st.caption("Gérez vos liens et lancez le scraping.")
     
-    # Bouton de lancement
+    
+    # --- 2. MENU LATÉRAL : PARAMÈTRES DE CALCUL (Nouveauté) ---
+    with st.sidebar:
+        st.header("⚙️ Ajuster les Paramètres")
+        st.caption("Modifiez ces valeurs pour recalculer les prix finaux.")
+        
+        # st.slider pour la marge (plus visuel)
+        marge_brute = st.slider(
+            "Coefficient de Marge Brute", 
+            1.0, 3.0, 
+            value=1.60, 
+            step=0.01,
+            help="1.60 = 60% de marge. Prix HT x 1.60"
+        )
+        # st.number_input pour les frais
+        frais_mo = st.number_input(
+            "Frais Fixes de Main d'Œuvre (€)", 
+            0.0, 100.0, 
+            value=20.0,
+            step=1.0
+        )
+        # st.number_input pour la TVA
+        tva_coeff = st.number_input(
+            "Coefficient de TVA (Ex: 1.20 pour 20%)", 
+            1.0, 3.0, 
+            value=1.20,
+            step=0.01
+        )
+        st.markdown("---")
+        
+    
+    # --- 3. ZONE PRINCIPALE : GESTION DES LIENS (Nouveauté) ---
+    st.subheader("🔗 Liens de Catégories à Scraper")
+    st.caption("Ajoutez, modifiez ou supprimez des liens directement dans le tableau. Cliquez deux fois sur une cellule pour la modifier. Le tri se fait en cliquant sur les en-têtes.")
+
+    # st.data_editor pour gérer les données de manière interactive
+    edited_links = st.data_editor(
+        st.session_state['model_links'],
+        column_config={
+            0: st.column_config.TextColumn("Nom du Modèle", help="Ex: iPhone 15 Pro Max", width="medium"),
+            1: st.column_config.TextColumn("URL de la Catégorie", help="Lien complet de la catégorie sur visiodirect-mobile.com", width="large"),
+        },
+        num_rows="dynamic", # Permet d'ajouter de nouvelles lignes
+        hide_index=True
+    )
+    
+    # Met à jour la Session State avec les liens édités par l'utilisateur
+    st.session_state['model_links'] = edited_links
+
+    # Filtration des lignes vides ou non valides
+    urls_to_scrape = st.session_state['model_links']
+    valid_urls_to_scrape = [ 
+        (name, url) for name, url in urls_to_scrape 
+        if isinstance(name, str) and isinstance(url, str) and name.strip() and url.strip().startswith('http') 
+    ]
+    
+    st.info(f"**{len(valid_urls_to_scrape)}** liens valides seront scannés.")
+
+
+    # --- 4. BOUTON D'EXÉCUTION ---
     if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
+        if not valid_urls_to_scrape:
+            st.error("Veuillez ajouter au moins un lien valide pour commencer le scraping.")
+            return
+
         toutes_les_donnees: List[Dict[str, Any]] = []
+        st.info("Démarrage du processus. Le temps d'exécution dépend du nombre de liens (comptez plusieurs minutes).")
         
-        st.info("Démarrage du processus. Cela peut prendre plusieurs minutes (plus de 30 modèles).")
-        
-        # UTILISATION DU NOUVEAU st.status POUR UN LOG ROBUSTE
         with st.status('Scraping et traitement en cours...', expanded=True) as log_status:
             
-            total_models = len(MODEL_URLS)
+            total_models = len(valid_urls_to_scrape)
             
-            # La barre de progression est maintenant dans la colonne de droite pour éviter les conflits d'affichage
-            col1, col2 = st.columns([4, 1])
+            # Utilisation de colonnes pour une meilleure mise en page mobile
+            col1, col2 = st.columns([4, 1]) 
             progress_bar = col1.progress(0, text="Progression globale...")
             
-            for index, (model_name, model_url) in enumerate(MODEL_URLS):
+            for index, (model_name, model_url) in enumerate(valid_urls_to_scrape):
                 
-                # Mise à jour de la barre de progression
                 progress_bar.progress((index + 1) / total_models, text=f"Modèle {index+1}/{total_models} : {model_name}")
                 
-                # Attente entre les modèles (conservé pour éthique)
                 time.sleep(random.uniform(2.0, 5.0)) 
                 
-                # Le log_status.info/warning est passé à la fonction
                 data_modele = scrape_model_page_streamlit(model_name, model_url, log_status.info)
                 toutes_les_donnees.extend(data_modele)
 
-            # Traitement final et obtention du texte CSV
+            # Traitement final et obtention du texte CSV, en passant les nouveaux paramètres
             log_status.update(label="Traitement final des données...", state="running", expanded=True)
-            csv_text = process_and_get_csv_text(toutes_les_donnees)
+            csv_text = process_and_get_csv_text(
+                toutes_les_donnees, 
+                marge_brute, 
+                frais_mo, 
+                tva_coeff
+            )
         
-        # FIN DU BLOC st.status
+        # --- 5. RÉSULTATS ---
         
         st.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants extraits.")
         
