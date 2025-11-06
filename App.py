@@ -8,40 +8,35 @@ import random
 from typing import List, Dict, Any, Tuple
 import io 
 import streamlit as st 
+import pandas as pd 
+# La bibliothèque openpyxl est maintenant installée via requirements.txt
 
 # --- CONFIGURATION INITIALE DES LIENS ---
-# Cette liste n'est utilisée que la première fois que l'utilisateur lance l'application.
-# Ensuite, la liste est stockée et modifiée par l'utilisateur via le tableau interactif.
+# Cette liste sert de base si la session est vide
 DEFAULT_MODEL_URLS: List[Tuple[str, str]] = [
     # iPhone 15 Series
     ("iPhone 15 Pro Max", "http://www.visiodirect-mobile.com/iphone-15-pro-max-ssf1301-fss2-fcss4.html"),
     ("iPhone 15 Pro", "http://www.visiodirect-mobile.com/iphone-15-pro-ssf1300-fss2-fcss4.html"),
     ("iPhone 15 Plus", "http://www.visiodirect-mobile.com/iphone-15-plus-ssf1299-fss2-fcss4.html"),
     ("iPhone 15", "http://www.visiodirect-mobile.com/iphone-15-ssf1298-fss2-fcss4.html"),
-    # iPhone 14 Series (Raccourci pour l'exemple)
-    ("iPhone 14 Pro Max", "http://www.visiodirect-mobile.com/iphone-14-pro-max-ssf1297-fss2-fcss4.html"),
-    ("iPhone 14 Pro", "http://www.visiodirect-mobile.com/iphone-14-pro-ssf1296-fss2-fcss4.html"),
-    ("iPhone 14 Plus", "http://www.visiodirect-mobile.com/iphone-14-plus-ssf1086-fss2-fcss4.html"),
-    ("iPhone 14", "http://www.visiodirect-mobile.com/iphone-14-ssf1085-fss2-fcss4.html"),
-    # Ajoutez d'autres modèles ici si vous le souhaitez pour l'initialisation
+    # ... (les autres liens par défaut)
 ] 
 
 # SÉLECTEUR DE PRODUIT CONFIRMÉ
 PRODUCT_CONTAINER_SELECTOR: str = 'div.cadre_prod'
 BASE_URL: str = "http://www.visiodirect-mobile.com"
 
-
-# --- FONCTIONS UTILITAIRES ---
+# --- FONCTIONS UTILITAIRES (Inchangées) ---
 @st.cache_data 
 def clean_price(price_raw: str) -> float:
-    """Nettoie une chaîne de prix pour la convertir en nombre flottant (float)."""
+    # ... (fonction inchangée)
     if price_raw == "N/A": return 0.0
     cleaned_price = price_raw.lower().replace('€', '').replace('ttc', '').replace('.', '').replace(',', '.').strip()
     try: return float(cleaned_price)
     except ValueError: return 0.0
 
 def get_soup(url: str, max_retries: int = 3, log_func=st.warning) -> BeautifulSoup | None:
-    """Télécharge l'URL et retourne l'objet Beautiful Soup, avec des tentatives en cas d'échec."""
+    # ... (fonction inchangée)
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     for attempt in range(max_retries):
         try:
@@ -56,14 +51,13 @@ def get_soup(url: str, max_retries: int = 3, log_func=st.warning) -> BeautifulSo
     return None
 
 def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> List[Dict[str, Any]]:
-    """Visite la page du modèle et extrait tous les composants (produits) pour l'interface Streamlit."""
+    # ... (fonction inchangée, code de scraping)
     
     log_func(f"**🔎 Démarrage du scraping des composants pour {model_name}...**")
     
     all_products_for_model: List[Dict[str, Any]] = []
     current_page = 1
     total_pages = 1 
-    # ... (Le reste du code de scraping est le même que la version corrigée)
     
     while current_page <= total_pages:
         url = model_url.replace(".html", f"-p{current_page}.html") if current_page > 1 else model_url
@@ -135,11 +129,9 @@ def scrape_model_page_streamlit(model_name: str, model_url: str, log_func) -> Li
         
     return all_products_for_model
 
-# --- EXPORTATION ET TRI (MAJ avec paramètres dynamiques) ---
-
 @st.cache_data
 def process_and_get_csv_text(data: List[Dict[str, Any]], marge_brute: float, frais_fixes_mo: float, tva_coeff: float) -> str | None:
-    """Applique les calculs de prix basés sur les paramètres utilisateur et génère le CSV."""
+    # ... (fonction de traitement final inchangée)
     if not data: return None
 
     # --- 1. CALCUL ET FORMATAGE DES PRIX ---
@@ -184,18 +176,68 @@ def process_and_get_csv_text(data: List[Dict[str, Any]], marge_brute: float, fra
     
     return output.getvalue()
 
+def download_links_csv(model_links: List[Tuple[str, str]]) -> str:
+    """Crée et retourne le contenu CSV des liens de modèles."""
+    df = pd.DataFrame(model_links, columns=['Nom du Modèle', 'URL de la Catégorie'])
+    return df.to_csv(index=False, sep=';', encoding='utf-8-sig')
 
-# --- INTERFACE ET EXECUTION PRINCIPALE STREAMLIT ---
+# --- FONCTION MODIFIÉE POUR GÉRER CSV ET EXCEL (.xlsx) ---
+def upload_links_file(uploaded_file: io.BytesIO | None) -> List[Tuple[str, str]] | None:
+    """Traite le fichier (CSV ou Excel) téléversé et retourne la liste des liens."""
+    if uploaded_file is None:
+        return None
+    
+    file_name = uploaded_file.name
+    
+    try:
+        if file_name.endswith('.csv'):
+            # Lecture CSV : Séparateur point-virgule pour Excel français
+            df = pd.read_csv(uploaded_file, sep=';', encoding='utf-8-sig')
+            
+        elif file_name.endswith('.xlsx'):
+            # Lecture Excel : pandas gère la lecture de la première feuille
+            df = pd.read_excel(uploaded_file)
+            
+        else:
+            st.error("Format de fichier non pris en charge. Veuillez utiliser un fichier CSV (avec séparateur point-virgule) ou Excel (.xlsx).")
+            return None
+        
+        # Validation des colonnes (doit avoir au moins deux colonnes)
+        if len(df.columns) < 2:
+            st.error("Le fichier doit contenir les données sur deux colonnes : 1) Nom du Modèle et 2) URL de la Catégorie.")
+            return None
+            
+        # Renomme les colonnes pour s'assurer que l'extraction est correcte
+        df.columns = ['Nom du Modèle', 'URL de la Catégorie'] + list(df.columns[2:])
+        
+        # Sélectionne les colonnes nécessaires et convertit en liste de tuples (Nom, URL)
+        new_links = list(df[['Nom du Modèle', 'URL de la Catégorie']].itertuples(index=False, name=None))
+        
+        # Filtrage pour enlever les entrées invalides ou vides
+        valid_new_links = [
+            (str(name).strip(), str(url).strip())
+            for name, url in new_links
+            if str(name).strip() and str(url).strip().startswith('http')
+        ]
+        
+        st.success(f"**{len(valid_new_links)}** liens de modèles importés avec succès depuis le fichier !")
+        return valid_new_links
+        
+    except Exception as e:
+        st.error(f"Erreur lors du traitement du fichier. Veuillez vérifier la structure (Nom et URL en colonnes 1 et 2). Détail de l'erreur : {e}")
+        return None
+
+# --- INTERFACE ET EXECUTION PRINCIPALE STREAMLIT (Mise à jour pour le file_uploader) ---
 
 def main():
     
     st.set_page_config(
         page_title="Scraper Catalogue iPhone", 
         layout="centered",
-        initial_sidebar_state="expanded" # Le menu sera ouvert par défaut
+        initial_sidebar_state="expanded" 
     )
 
-    # --- 1. GESTION DE L'ÉTAT DE SESSION (Sauvegarde des liens) ---
+    # --- 1. GESTION DE L'ÉTAT DE SESSION ---
     if 'model_links' not in st.session_state:
         st.session_state['model_links'] = DEFAULT_MODEL_URLS
         
@@ -203,12 +245,11 @@ def main():
     st.caption("Gérez vos liens et lancez le scraping.")
     
     
-    # --- 2. MENU LATÉRAL : PARAMÈTRES DE CALCUL (Nouveauté) ---
+    # --- 2. MENU LATÉRAL : PARAMÈTRES DE CALCUL (Inchangé) ---
     with st.sidebar:
         st.header("⚙️ Ajuster les Paramètres")
         st.caption("Modifiez ces valeurs pour recalculer les prix finaux.")
         
-        # st.slider pour la marge (plus visuel)
         marge_brute = st.slider(
             "Coefficient de Marge Brute", 
             1.0, 3.0, 
@@ -216,14 +257,12 @@ def main():
             step=0.01,
             help="1.60 = 60% de marge. Prix HT x 1.60"
         )
-        # st.number_input pour les frais
         frais_mo = st.number_input(
             "Frais Fixes de Main d'Œuvre (€)", 
             0.0, 100.0, 
             value=20.0,
             step=1.0
         )
-        # st.number_input pour la TVA
         tva_coeff = st.number_input(
             "Coefficient de TVA (Ex: 1.20 pour 20%)", 
             1.0, 3.0, 
@@ -233,22 +272,52 @@ def main():
         st.markdown("---")
         
     
-    # --- 3. ZONE PRINCIPALE : GESTION DES LIENS (Nouveauté) ---
+    # --- 3. ZONE PRINCIPALE : GESTION DES LIENS ---
     st.subheader("🔗 Liens de Catégories à Scraper")
-    st.caption("Ajoutez, modifiez ou supprimez des liens directement dans le tableau. Cliquez deux fois sur une cellule pour la modifier. Le tri se fait en cliquant sur les en-têtes.")
+    st.caption("Modifiez, ajoutez manuellement, ou utilisez les boutons ci-dessous pour importer/exporter la liste en masse.")
 
-    # st.data_editor pour gérer les données de manière interactive
+    # Boutons d'Import/Export dans deux colonnes
+    col_dl, col_ul = st.columns(2)
+
+    # EXPORTATION DES LIENS (pour les modifier sur l'ordinateur)
+    csv_links = download_links_csv(st.session_state['model_links'])
+    col_dl.download_button(
+        label="⬇️ Exporter les liens (CSV)",
+        data=csv_links,
+        file_name='liens_modeles_a_modifier.csv',
+        mime='text/csv',
+        help="Téléchargez ce fichier, ajoutez-y toutes vos nouvelles lignes, puis réimportez-le."
+    )
+
+    # IMPORTATION DES LIENS (téléversement du fichier mis à jour)
+    uploaded_file = col_ul.file_uploader(
+        "Importer des liens (CSV ou Excel)", 
+        # On accepte maintenant CSV et EXCEL
+        type=['csv', 'xlsx'], 
+        key="uploader_links",
+        help="Téléversez le fichier (CSV séparé par ';', ou Excel .xlsx). La première colonne doit contenir le Nom, la deuxième l'URL."
+    )
+
+    # Logique d'importation
+    if uploaded_file is not None:
+        new_links = upload_links_file(uploaded_file)
+        if new_links:
+            st.session_state['model_links'] = new_links
+            st.rerun() 
+
+
+    # Tableau éditable (avec les données mises à jour si importées)
     edited_links = st.data_editor(
         st.session_state['model_links'],
         column_config={
             0: st.column_config.TextColumn("Nom du Modèle", help="Ex: iPhone 15 Pro Max", width="medium"),
             1: st.column_config.TextColumn("URL de la Catégorie", help="Lien complet de la catégorie sur visiodirect-mobile.com", width="large"),
         },
-        num_rows="dynamic", # Permet d'ajouter de nouvelles lignes
-        hide_index=True
+        num_rows="dynamic", 
+        hide_index=True,
+        key="data_editor_links"
     )
     
-    # Met à jour la Session State avec les liens édités par l'utilisateur
     st.session_state['model_links'] = edited_links
 
     # Filtration des lignes vides ou non valides
@@ -261,7 +330,7 @@ def main():
     st.info(f"**{len(valid_urls_to_scrape)}** liens valides seront scannés.")
 
 
-    # --- 4. BOUTON D'EXÉCUTION ---
+    # --- 4. BOUTON D'EXÉCUTION (Inchangé) ---
     if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
         if not valid_urls_to_scrape:
             st.error("Veuillez ajouter au moins un lien valide pour commencer le scraping.")
@@ -274,7 +343,6 @@ def main():
             
             total_models = len(valid_urls_to_scrape)
             
-            # Utilisation de colonnes pour une meilleure mise en page mobile
             col1, col2 = st.columns([4, 1]) 
             progress_bar = col1.progress(0, text="Progression globale...")
             
@@ -287,7 +355,6 @@ def main():
                 data_modele = scrape_model_page_streamlit(model_name, model_url, log_status.info)
                 toutes_les_donnees.extend(data_modele)
 
-            # Traitement final et obtention du texte CSV, en passant les nouveaux paramètres
             log_status.update(label="Traitement final des données...", state="running", expanded=True)
             csv_text = process_and_get_csv_text(
                 toutes_les_donnees, 
@@ -296,7 +363,7 @@ def main():
                 tva_coeff
             )
         
-        # --- 5. RÉSULTATS ---
+        # --- 5. RÉSULTATS (Inchangé) ---
         
         st.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants extraits.")
         
