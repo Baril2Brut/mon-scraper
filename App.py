@@ -293,6 +293,17 @@ def main():
         initial_sidebar_state="expanded" 
     )
 
+    # --- CODE DE DÉBOGAGE (À SUPPRIMER PLUS TARD) ---
+    try:
+        # Tente de lire une partie de la clé
+        if 'private_key_id' in st.secrets["gcp_service_account"]:
+             st.success("✅ **SECRET CHARGÉ !** La connexion Google est prête à être testée.")
+        else:
+             st.error("❌ SECRET NON TROUVÉ. Veuillez vérifier le formatage dans Streamlit Cloud.")
+    except Exception:
+        st.error("❌ ERREUR DE LECTURE DU SECRET. La clé 'gcp_service_account' est manquante ou mal formatée.")
+    # --- FIN DU CODE DE DÉBOGAGE ---
+
     # --- 1. GESTION DE L'ÉTAT DE SESSION ---
     if 'model_links' not in st.session_state:
         st.session_state['model_links'] = DEFAULT_MODEL_URLS
