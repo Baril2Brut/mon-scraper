@@ -7,41 +7,40 @@ import pandas as pd
 import time
 import random
 from typing import List, Dict, Any, Tuple
-# Assurez-vous que scraper_iphone.py est dans le même dossier !
+# Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
 
-# --- CONFIGURATION GOOGLE SHEETS (CORRIGÉE) ---
-# URL complète fournie par l'utilisateur
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84/edit" 
-# Nom de l'onglet corrigé pour correspondre à votre capture d'écran ('Feuille 1')
+# --- CONFIGURATION GOOGLE SHEETS (CORRIGÉE avec ID) ---
+
+# ID de votre feuille de calcul (extrait de l'URL)
+SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84" 
+# Nom de l'onglet, confirmé par votre capture d'écran (IMPORTANT : sensible à la casse)
 SHEET_NAME = "Feuille 1" 
 
 # --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS ---
 
 @st.cache_data(ttl=600) 
 def load_model_urls_from_sheets():
-    """Se connecte à Google Sheets via les secrets et charge la liste des URLs à scraper."""
+    """Se connecte à Google Sheets et charge la liste des URLs à scraper."""
     
-    # Vérification initiale si le secret existe (pour éviter l'erreur initiale)
     if 'gcp_service_account' not in st.secrets:
-        st.sidebar.error("❌ Secret 'gcp_service_account' manquant. Configuré ?")
+        st.sidebar.error("❌ Secret 'gcp_service_account' manquant. L'application ne peut pas se connecter.")
         return None
 
     try:
-        # 1. Connexion à Google Sheets
+        # 1. Connexion à Google Sheets via le secret
         gc = gspread.service_account_from_dict(st.secrets['gcp_service_account']) 
         
-        # 2. Ouverture de la feuille de calcul
-        sh = gc.open_by_url(SPREADSHEET_URL)
+        # 2. Ouverture de la feuille de calcul par ID (méthode plus fiable)
+        sh = gc.open_by_key(SPREADSHEET_ID)
         
         # 3. Sélection de l'onglet
-        # C'est ici que l'erreur 'Configuration_Liens_Scraper' était causée.
         worksheet = sh.worksheet(SHEET_NAME) 
 
-        # 4. Lecture des données dans un DataFrame
+        # 4. Lecture des données dans une liste de dictionnaires
         df = pd.DataFrame(worksheet.get_all_records())
         
-        # 5. Vérification et extraction des colonnes
+        # 5. Définition des noms de colonnes (doivent correspondre EXACTEMENT)
         COL_MODEL = 'Nom du Modèle' 
         COL_URL = 'URL de la Catégorie' 
         
@@ -49,16 +48,29 @@ def load_model_urls_from_sheets():
             st.error(f"❌ Colonnes '{COL_MODEL}' ou '{COL_URL}' introuvables dans la feuille '{SHEET_NAME}'.")
             return None
             
-        # Extraction des paires (Nom du Modèle, URL de la Catégorie)
-        model_urls_list = list(df[[COL_MODEL, COL_URL]].dropna().itertuples(index=False, name=None))
+        # 6. Extraction et validation des URLs
+        model_urls_list = []
+        for index, row in df.iterrows():
+            model_name = row[COL_MODEL]
+            url = row[COL_URL]
+            
+            # La ligne ne doit pas être vide et l'URL doit commencer par http/https
+            if model_name and str(url).strip().lower().startswith("http"):
+                model_urls_list.append((model_name, str(url).strip()))
+
         
+        if not model_urls_list:
+            # Cette erreur se déclenche si toutes les lignes sont invalides ou si le tableau est vide
+            st.error("🛑 Impossible de lancer : La liste de liens chargés est vide. Vérifiez la feuille.")
+            return None
+            
         st.sidebar.success(f"✅ Chargement réussi : **{len(model_urls_list)}** liens chargés depuis Sheets.")
         
         return model_urls_list
 
     except Exception as e:
-        # Ceci peut être causé par : clé invalide (problème 4), feuille non partagée ou URL incorrecte
-        st.sidebar.error(f"❌ Erreur connexion Sheets. Partage ou Clé invalide : {e}")
+        # Ce message d'erreur est affiché en cas de problème de connexion (permissions, JWT, etc.)
+        st.sidebar.error(f"❌ Échec de la connexion Sheets. Vérifiez les permissions de partage et le Secret TOML. Erreur : {e}")
         return None
 
 # --- INTERFACE STREAMLIT PRINCIPALE ---
@@ -77,11 +89,12 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("Statut de la Connexion")
+    # Lance la vérification de la connexion dès le chargement de l'interface
+    model_urls_on_load = load_model_urls_from_sheets()
 
 if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
     
-    # 1. Tente de charger la liste des URLs (vérifie aussi la connexion Sheets)
-    model_urls_to_scrape = load_model_urls_from_sheets()
+    model_urls_to_scrape = model_urls_on_load # Utilise le résultat de la vérification initiale
 
     if not model_urls_to_scrape:
         st.error("🛑 Impossible de lancer : Aucun lien valide n'a pu être chargé depuis Google Sheets.")
@@ -95,7 +108,6 @@ if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
         for model_name, model_url in model_urls_to_scrape:
             # Délai entre les modèles
             time.sleep(random.uniform(2.0, 5.0)) 
-            # Note: on passe le conteneur de statut pour afficher les logs dans la boucle
             scrape_model_page(model_name, model_url, toutes_les_donnees, log_status) 
         
         log_status.update(label="Traitement final des données...", state="running", expanded=True)
@@ -119,4 +131,6 @@ if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
             )
             st.balloons()
         else:
-            log_status.error("Erreur lors de la génération du fichier CSV.")
+            log_status.error("Erreur lors de la génération du fichier CSV (aucune donnée trouvée).")
+
+# Fin du fichier app.py
