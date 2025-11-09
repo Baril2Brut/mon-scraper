@@ -3,7 +3,7 @@
 # =================================================================
 import streamlit as st
 import gspread 
-import gspread_dataframe as gd # NOUVELLE LIBRAIRIE IMPORTÉE
+import gspread_dataframe as gd 
 import pandas as pd 
 import time
 import random
@@ -16,15 +16,20 @@ from scraper_iphone import scrape_model_page, export_to_csv
 # ID de votre feuille de calcul (extrait de l'URL)
 SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84" 
 # Nom de l'onglet (IMPORTANT : sensible à la casse)
-SHEET_NAME = "Configuration_Liens_Scraper" 
+SHEET_NAME = "Configuration_Liens_Scraper" # J'utilise le nom que l'application recherche
+
+# Noms de colonnes cibles
+COL_MODEL = 'MODELE'
+COL_URL = 'URL'
+
 
 # --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS (AVEC gspread-dataframe) ---
 
-@st.cache_data(ttl=600) 
+@st.cache_data(ttl=600, show_spinner="Chargement et vérification des liens depuis Google Sheets...") 
 def load_model_urls_from_sheets():
     """
-    Se connecte à Google Sheets et charge la liste des URLs à scraper
-    en utilisant gspread-dataframe pour une lecture plus robuste.
+    Se connecte à Google Sheets et charge la liste des URLs à scraper.
+    La fonction est optimisée pour une robustesse maximale des en-têtes.
     """
     
     if 'gcp_service_account' not in st.secrets:
@@ -32,51 +37,52 @@ def load_model_urls_from_sheets():
         return None
 
     try:
-        # 1. Connexion à Google Sheets via le secret
+        # 1. Connexion et Ouverture de la feuille
         gc = gspread.service_account_from_dict(st.secrets['gcp_service_account']) 
-        
-        # 2. Ouverture de la feuille de calcul par ID (méthode plus fiable)
         sh = gc.open_by_key(SPREADSHEET_ID)
-        
-        # 3. Sélection de l'onglet
         worksheet = sh.worksheet(SHEET_NAME) 
 
-        # 4. Lecture des données dans un DataFrame en utilisant gspread_dataframe
-        # Ceci est la CLÉ : C'est la méthode qui fonctionnait dans votre ancien code.
-        df = gd.get_as_dataframe(worksheet, header=1)
+        # 2. Lecture des données dans un DataFrame
+        df_raw = gd.get_as_dataframe(worksheet, header=1)
         
-        # 5. Définition des noms de colonnes (doivent correspondre EXACTEMENT)
-        # Utilisez les noms sans accent et sans caractère spécial pour la robustesse.
-        COL_MODEL = 'MODELE'
-        COL_URL = 'URL'
+        # 3. Nettoyage des noms de colonnes du DataFrame pour la recherche
+        column_map = {}
+        found_model_col, found_url_col = None, None
         
-        # Nettoyage des noms de colonnes pour forcer la correspondance (même si gd est plus tolérant)
-        df.columns = [col.upper().replace(' ', '_').strip() for col in df.columns]
-        
-        if COL_MODEL not in df.columns or COL_URL not in df.columns:
-            st.error(f"❌ Colonnes '{COL_MODEL}' ou '{COL_URL}' introuvables dans la feuille '{SHEET_NAME}'.")
-            st.warning("Vérifiez que les en-têtes dans Sheets sont EXACTEMENT 'MODELE' et 'URL'.")
+        # Chercher les colonnes "MODELE" et "URL" malgré les accents/majuscules/espaces
+        for col in df_raw.columns:
+            cleaned_col = str(col).strip().upper().replace(' ', '_').replace('-', '_').replace('É', 'E').replace('È', 'E')
+            if 'MODEL' in cleaned_col or 'MODELE' in cleaned_col:
+                found_model_col = col
+            if 'URL' in cleaned_col or 'LINK' in cleaned_col:
+                found_url_col = col
+
+        if not found_model_col or not found_url_col:
+            st.error(f"❌ Colonnes '{COL_MODEL}' ou '{COL_URL}' introuvables.")
+            st.warning(f"Le script a trouvé les colonnes : {list(df_raw.columns)}. Vérifiez que 'MODELE' et 'URL' sont présents.")
             return None
             
-        # 6. Extraction et validation des URLs
+        # Créer un DataFrame propre avec les deux colonnes trouvées
+        df = df_raw[[found_model_col, found_url_col]].copy()
+        df.columns = [COL_MODEL, COL_URL] # Renommer pour un accès facile
+        
+        # Supprimer les lignes entièrement vides (celles où les deux colonnes sont NaN)
+        df.dropna(how='all', inplace=True) 
+        
+        # 4. Extraction et validation des URLs (plus simple)
         model_urls_list = []
-        # On utilise .itertuples() pour plus de performance et de sécurité
-        for row in df.itertuples(index=False):
-            # Accès par index positionnel car les colonnes ont été vérifiées
-            try:
-                model_name = getattr(row, COL_MODEL)
-                url = getattr(row, COL_URL)
-            except AttributeError:
-                continue # Passe les lignes sans ces attributs
+        for index, row in df.iterrows():
+            model_name = str(row[COL_MODEL]).strip()
+            url = str(row[COL_URL]).strip()
             
-            # La ligne ne doit pas être vide et l'URL doit commencer par http/https
-            if model_name and str(url).strip().lower().startswith("http"):
-                model_urls_list.append((str(model_name).strip(), str(url).strip()))
+            # La validation des liens doit être stricte
+            if model_name and url.lower().startswith("http"):
+                model_urls_list.append((model_name, url))
 
         
         if not model_urls_list:
             # Cette erreur se déclenche si toutes les lignes sont invalides ou si le tableau est vide
-            st.error("🛑 Impossible de lancer : La liste de liens chargés est vide. Vérifiez la feuille.")
+            st.error("🛑 Impossible de lancer : La liste de liens chargée est vide. Vérifiez la feuille (Contenu ou URL).")
             return None
             
         st.sidebar.success(f"✅ Chargement réussi : **{len(model_urls_list)}** liens chargés depuis Sheets.")
@@ -84,14 +90,13 @@ def load_model_urls_from_sheets():
         return model_urls_list
 
     except Exception as e:
-        # Ce message d'erreur est affiché en cas de problème de connexion (permissions, JWT, etc.)
-        st.sidebar.error(f"❌ Échec de la connexion Sheets. Vérifiez les permissions de partage et le Secret TOML. Erreur : {e}")
+        # Affichage générique pour les erreurs de connexion/permission
+        st.sidebar.error(f"❌ Échec de la connexion Sheets. Vérifiez les permissions de partage (compte de service) et le Secret TOML. Erreur : {e}")
         return None
 
 # --- INTERFACE STREAMLIT PRINCIPALE ---
 
 st.set_page_config(page_title="Scraper Catalogue iPhone", layout="centered")
-# CORRECTION DU TITRE : Utiliser un titre purement ASCII (sans emoji ni caractères spéciaux)
 st.title("Catalogue iPhone Visiodirect")
 st.caption("Synchronisation des liens via Google Sheets")
 
@@ -100,7 +105,6 @@ with st.sidebar:
     st.header("⚙️ Ajuster les Paramètres")
     
     marge_brute = st.slider("Coefficient de Marge Brute", 1.0, 3.0, value=1.60, step=0.01)
-    # Remplacement des accents ici aussi par sécurité pour l'encodage
     frais_mo = st.number_input("Frais Fixes de Main d'Oeuvre (€)", 0.0, 100.0, value=20.0, step=1.0)
     tva_coeff = st.number_input("Coefficient de TVA (Ex: 1.20 pour 20%)", 1.0, 3.0, value=1.20, step=0.01)
     
@@ -111,7 +115,7 @@ with st.sidebar:
 
 if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
     
-    model_urls_to_scrape = model_urls_on_load # Utilise le résultat de la vérification initiale
+    model_urls_to_scrape = model_urls_on_load 
 
     if not model_urls_to_scrape:
         st.error("🛑 Impossible de lancer : Aucun lien valide n'a pu être chargé depuis Google Sheets.")
@@ -149,5 +153,3 @@ if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
             st.balloons()
         else:
             log_status.error("Erreur lors de la génération du fichier CSV (aucune donnée trouvée).")
-
-# Fin du fichier app.py
