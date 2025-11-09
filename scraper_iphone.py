@@ -10,6 +10,7 @@ import time
 import math 
 import random 
 from typing import List, Dict, Any, Tuple
+import io # Ajout pour l'export CSV en mémoire
 
 # SÉLECTEUR DE PRODUIT CONFIRMÉ
 PRODUCT_CONTAINER_SELECTOR: str = 'div.cadre_prod'
@@ -18,10 +19,11 @@ PRODUCT_CONTAINER_SELECTOR: str = 'div.cadre_prod'
 BASE_URL: str = "http://www.visiodirect-mobile.com"
 
 
-# --- PARAMÈTRES DE REPRICING (Calculs) --- 
-MARGE_BRUTE = 1.60       # Multiplicateur pour une marge de 60%
-FRAIS_FIXES_MO = 20.0     # Frais de main d'œuvre fixes de 20.0 €
-TVA_COEFFICIENT = 1.20    # Multiplicateur pour une TVA de 20%
+# --- PARAMÈTRES DE REPRICING (Valeurs par défaut) --- 
+# Ces valeurs sont conservées comme défauts mais seront écrasées par App.py
+MARGE_BRUTE_DEFAULT = 1.60       # Multiplicateur pour une marge de 60%
+FRAIS_FIXES_MO_DEFAULT = 20.0     # Frais de main d'œuvre fixes de 20.0 €
+TVA_COEFFICIENT_DEFAULT = 1.20    # Multiplicateur pour une TVA de 20%
 
 
 # --- FONCTIONS UTILITAIRES ---
@@ -138,7 +140,11 @@ def scrape_model_page(model_name: str, model_url: str, all_products: List[Dict[s
 
 # --- EXPORTATION ET TRI ---
 
-def export_to_csv(data: List[Dict[str, Any]], filename: str = "resultats_catalogue_iphone.csv"):
+def export_to_csv(data: List[Dict[str, Any]], 
+                  marge_brute: float = MARGE_BRUTE_DEFAULT,      # <--- ACCEPTE LA MARGE BRUTE
+                  frais_fixes_mo: float = FRAIS_FIXES_MO_DEFAULT, # <--- ACCEPTE LES FRAIS FIXES
+                  tva_coefficient: float = TVA_COEFFICIENT_DEFAULT, # <--- ACCEPTE LE COEFFICIENT TVA
+                  filename: str = "resultats_catalogue_iphone.csv"):
     """Effectue le Repricing, formate les prix en euros, trie les données, puis les écrit dans un fichier CSV."""
     if not data:
         print("\n[EXPORT] Aucune donnée à exporter.")
@@ -149,13 +155,13 @@ def export_to_csv(data: List[Dict[str, Any]], filename: str = "resultats_catalog
         price_float = item['price_float']
         
         # 1. Appliquer la marge brute (x1.60)
-        prix_marge = price_float * MARGE_BRUTE
+        prix_marge = price_float * marge_brute # <--- UTILISE LA VALEUR PASSÉE
         
         # 2. Ajouter les frais fixes de main d'œuvre (+ 20.0 €)
-        prix_intermediaire = prix_marge + FRAIS_FIXES_MO
+        prix_intermediaire = prix_marge + frais_fixes_mo # <--- UTILISE LA VALEUR PASSÉE
         
         # 3. Ajouter la TVA et arrondir au supérieur (math.ceil)
-        prix_final_ttc = math.ceil(prix_intermediaire * TVA_COEFFICIENT)
+        prix_final_ttc = math.ceil(prix_intermediaire * tva_coefficient) # <--- UTILISE LA VALEUR PASSÉE
         
         # FORMATAGE EN CHAÎNE DE CARACTÈRES AVEC LE SYMBOLE € ET LA VIRGULE POUR LE DÉCIMAL
         
@@ -195,7 +201,6 @@ def export_to_csv(data: List[Dict[str, Any]], filename: str = "resultats_catalog
 
     # Utilisation de 'utf-8-sig' et du point-virgule (delimiter=';') pour la compatibilité Excel/Sheets en français
     # Retourne le contenu en mémoire (BytesIO) pour Streamlit, au lieu de l'écrire sur disque.
-    import io
     csv_buffer = io.StringIO()
     try:
         writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames, delimiter=';')
