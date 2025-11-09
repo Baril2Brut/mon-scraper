@@ -1,4 +1,6 @@
+streamlit
+gspread
+pandas
 requests
 beautifulsoup4
-pandas
-gspread
+gspread-dataframe  # <- C'est la nouvelle dépendance !
