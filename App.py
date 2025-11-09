@@ -31,7 +31,8 @@ DEFAULT_MODEL_URLS: List[Tuple[str, str]] = [
 
 PRODUCT_CONTAINER_SELECTOR: str = 'div.cadre_prod'
 BASE_URL: str = "http://www.visiodirect-mobile.com"
-GSHEET_NAME: str = "Resultats_Scraping_iPhone_Automatise" # <--- IMPORTANT : CHANGEZ CECI PAR LE NOM EXACT DE VOTRE FEUILLE GOOGLE SHEET
+GSHEET_NAME: str = "Resultats_Scraping_iPhone_Automatise" # <--- Google Sheet pour les résultats
+LINKS_GSHEET_NAME: str = "Configuration_Liens_Scraper" # <--- Google Sheet pour les liens de configuration
 
 
 # --- FONCTIONS UTILITAIRES DE BASE ---
@@ -61,16 +62,15 @@ def clean_price(price_raw: str) -> float:
         cleaned_price_str = cleaned_price_str.replace('.', '') 
     elif '.' in cleaned_price_str and cleaned_price_str.count('.') == 1:
         # Format EN simple (ex: 12.34) - Laisser le point décimal
-        pass # <-- Correction de l'IndentationError
+        pass 
         
     cleaned_price_str = re.sub(r'[^\d.]', '', cleaned_price_str) # Suppression finale de tout sauf chiffres et point
 
     try: 
         final_price = float(cleaned_price_str)
         
-        # --- CORRECTION APPLIQUÉE ICI ---
-        # Si le prix est > 100 et que l'original ne contenait pas de point/virgule, on divise par 100
-        # pour corriger la lecture en centimes.
+        # --- CORRECTION PRIX ---
+        # Si le prix est > 1000 et que l'original ne contenait pas de point/virgule, on divise par 100
         if final_price > 1000.0 and (not any(c in price_raw for c in [',', '.'])): 
              return final_price / 100.0
         # --- FIN CORRECTION ---
@@ -270,7 +270,7 @@ def upload_links_file(uploaded_file: io.BytesIO | None) -> List[Tuple[str, str]]
         return None
 
 
-# --- FONCTIONS DE SAUVEGARDE GOOGLE SHEETS (Remplace rclone) ---
+# --- FONCTIONS DE SAUVEGARDE GOOGLE SHEETS (Authentification et Sauvegarde Résultats) ---
 
 @st.cache_resource 
 def get_gsheet_client():
@@ -284,7 +284,7 @@ def get_gsheet_client():
         return None
 
 def save_to_google_sheet(csv_text: str):
-    """Convertit le CSV en DataFrame et l'écrit automatiquement dans la Google Sheet."""
+    """Convertit le CSV des RÉSULTATS en DataFrame et l'écrit automatiquement dans la Google Sheet des résultats."""
     gc = get_gsheet_client()
     if not gc: return False
 
@@ -294,9 +294,9 @@ def save_to_google_sheet(csv_text: str):
         df = pd.read_csv(data_io, sep=';', encoding='utf-8-sig')
 
         # 2. Ouverture de la Google Sheet
-        spreadsheet_name = GSHEET_NAME # Utilise la constante définie en haut
+        spreadsheet_name = GSHEET_NAME 
         sh = gc.open(spreadsheet_name)
-        worksheet = sh.get_worksheet(0) # On utilise la première feuille (index 0)
+        worksheet = sh.get_worksheet(0) 
 
         # 3. Ajout d'une colonne de date/heure de l'export
         df.insert(0, 'Date Export', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -304,17 +304,78 @@ def save_to_google_sheet(csv_text: str):
         # 4. Écrit le DataFrame dans la feuille de calcul (remplace le contenu existant)
         gd.set_with_dataframe(worksheet, df) 
         
-        st.success(f"💾 SAUVEGARDE AUTOMATIQUE RÉUSSIE ! Les données ont été écrites dans la Google Sheet : **{spreadsheet_name}**.")
+        st.success(f"💾 SAUVEGARDE AUTOMATIQUE RÉUSSIE ! Les résultats ont été écrits dans : **{spreadsheet_name}**.")
         st.markdown(f"**[Cliquez ici pour voir les résultats]({sh.url})**")
 
         return True
 
     except gspread.exceptions.SpreadsheetNotFound:
-        st.error(f"❌ Fichier Google Sheet introuvable. Nom : '{spreadsheet_name}'. Assurez-vous qu'il est partagé avec le compte de service.")
-    except gspread.exceptions.WorksheetNotFound:
-        st.error(f"❌ Feuille non trouvée. Assurez-vous que la première feuille de '{spreadsheet_name}' existe.")
+        st.error(f"❌ Fichier Google Sheet des résultats introuvable. Nom : '{spreadsheet_name}'.")
     except Exception as e:
-        st.error(f"❌ Erreur lors de l'écriture dans Google Sheets : {e}")
+        st.error(f"❌ Erreur lors de l'écriture des résultats dans Google Sheets : {e}")
+        return False
+        
+        
+# --- NOUVELLES FONCTIONS DE SYNCHRONISATION DES LIENS ---
+
+@st.cache_data(show_spinner="Chargement des liens de configuration depuis Google Sheets...")
+def load_links_from_gsheet() -> List[Tuple[str, str]]:
+    """Tente de charger la liste des liens de modèles depuis la Google Sheet de configuration."""
+    gc = get_gsheet_client()
+    if not gc: 
+        st.warning("Chargement des liens par défaut (Cloud non connecté ou fichier non trouvé).")
+        return DEFAULT_MODEL_URLS
+        
+    try:
+        sh = gc.open(LINKS_GSHEET_NAME)
+        worksheet = sh.get_worksheet(0)
+        
+        # Lecture complète dans un DataFrame
+        df = gd.get_as_dataframe(worksheet, header=1)
+        
+        # Nettoyage et extraction
+        if 'Nom du Modèle' in df.columns and 'URL de la Catégorie' in df.columns:
+            new_links = list(df[['Nom du Modèle', 'URL de la Catégorie']].itertuples(index=False, name=None))
+            
+            valid_links = [
+                (str(name).strip(), str(url).strip())
+                for name, url in new_links
+                if str(name).strip() and str(url).strip().startswith('http')
+            ]
+            if valid_links:
+                st.info(f"✅ **{len(valid_links)}** liens chargés depuis Google Sheets : **{LINKS_GSHEET_NAME}**.")
+                return valid_links
+        
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.warning(f"Google Sheet de configuration introuvable ('{LINKS_GSHEET_NAME}'). Utilisation des liens par défaut.")
+    except Exception as e:
+        st.error(f"Erreur lors du chargement des liens depuis Google Sheets : {e}")
+        
+    return DEFAULT_MODEL_URLS
+
+def save_links_to_gsheet(links: List[Tuple[str, str]]):
+    """Écrit la liste actuelle des liens dans la Google Sheet de configuration."""
+    gc = get_gsheet_client()
+    if not gc: return
+
+    try:
+        # 1. Création du DataFrame
+        df = pd.DataFrame(links, columns=['Nom du Modèle', 'URL de la Catégorie'])
+
+        # 2. Ouverture de la Google Sheet
+        sh = gc.open(LINKS_GSHEET_NAME)
+        worksheet = sh.get_worksheet(0) 
+        
+        # 3. Écrit le DataFrame dans la feuille (remplace le contenu)
+        gd.set_with_dataframe(worksheet, df, include_index=False, resize=True) 
+        
+        st.success(f"💾 **SYNCHRONISATION CLOUD RÉUSSIE !** {len(links)} liens sauvegardés dans **{LINKS_GSHEET_NAME}**.")
+        st.markdown(f"**[Cliquez ici pour modifier les liens dans Sheets]({sh.url})**")
+        st.cache_data.clear() # Nettoyer le cache pour forcer le rechargement
+        return True
+
+    except Exception as e:
+        st.error(f"❌ Échec de la synchronisation des liens vers Google Sheets. Erreur : {e}")
         return False
 
 
@@ -330,7 +391,6 @@ def main():
 
     # --- CODE DE DÉBOGAGE (À SUPPRIMER PLUS TARD) ---
     try:
-        # Tente de lire une partie de la clé
         if 'private_key_id' in st.secrets["gcp_service_account"]:
              st.success("✅ **SECRET CHARGÉ !** La connexion Google est prête à être testée.")
         else:
@@ -341,7 +401,8 @@ def main():
 
     # --- 1. GESTION DE L'ÉTAT DE SESSION ---
     if 'model_links' not in st.session_state:
-        st.session_state['model_links'] = DEFAULT_MODEL_URLS
+        # CHARGE LES LIENS DEPUIS GOOGLE SHEETS DÈS LE DÉMARRAGE
+        st.session_state['model_links'] = load_links_from_gsheet()
         
     st.title("🤖 Catalogue iPhone Visiodirect")
     st.caption("Gérez vos liens et lancez le scraping.")
@@ -375,23 +436,23 @@ def main():
     
     # --- 3. ZONE PRINCIPALE : GESTION DES LIENS ---
     st.subheader("🔗 Liens de Catégories à Scraper")
-    st.caption("Modifiez, ajoutez, ou utilisez l'import/export pour la gestion de masse.")
+    st.caption("Synchronisez, modifiez ou utilisez l'import/export local.")
 
-    col_dl, col_ul = st.columns(2)
+    col_dl, col_ul, col_save = st.columns(3)
 
     # EXPORTATION
     csv_links = download_links_csv(st.session_state['model_links'])
     col_dl.download_button(
-        label="⬇️ Exporter les liens (CSV)",
+        label="⬇️ Exporter (CSV)",
         data=csv_links,
         file_name='liens_modeles_a_modifier.csv',
         mime='text/csv',
-        help="Téléchargez pour ajouter en masse sur votre PC/Mac."
+        help="Téléchargez la liste actuelle."
     )
 
     # IMPORTATION (accepte CSV et Excel)
     uploaded_file = col_ul.file_uploader(
-        "Importer des liens (CSV ou Excel)", 
+        "Importer un fichier", 
         type=['csv', 'xlsx'], 
         key="uploader_links",
         help="La première colonne doit contenir le Nom, la deuxième l'URL."
@@ -402,7 +463,11 @@ def main():
         if new_links:
             st.session_state['model_links'] = new_links
             st.rerun() 
-
+            
+    # NOUVEAU: BOUTON DE SAUVEGARDE VERS GOOGLE SHEETS
+    if col_save.button("⬆️ Sauvegarder dans le Cloud", type="secondary", help=f"Écrit les liens ci-dessous dans la Google Sheet '{LINKS_GSHEET_NAME}'"):
+        save_links_to_gsheet(st.session_state['model_links'])
+        st.rerun() # Recharger après sauvegarde pour confirmation
 
     # Tableau éditable 
     edited_links = st.data_editor(
@@ -466,9 +531,7 @@ def main():
         st.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants extraits.")
         
         if csv_text:
-            # Remplace la fonction rclone / le téléchargement manuel
             save_to_google_sheet(csv_text) 
-            
             st.balloons()
         else:
             st.error("Aucune donnée n'a pu être extraite.")
