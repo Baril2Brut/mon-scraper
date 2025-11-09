@@ -41,8 +41,8 @@ def load_model_urls_from_sheets():
         df = pd.DataFrame(worksheet.get_all_records())
         
         # 5. Définition des noms de colonnes (doivent correspondre EXACTEMENT)
-        COL_MODEL = 'Nom du Modele' 
-        COL_URL = 'URL de la Categorie' 
+        COL_MODEL = 'MODELE' 
+        COL_URL = 'URL' 
         
         if COL_MODEL not in df.columns or COL_URL not in df.columns:
             st.error(f"❌ Colonnes '{COL_MODEL}' ou '{COL_URL}' introuvables dans la feuille '{SHEET_NAME}'.")
