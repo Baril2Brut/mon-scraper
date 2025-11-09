@@ -7,7 +7,7 @@ import gspread_dataframe as gd
 import pandas as pd 
 import time
 import random
-import json # <--- NOUVEL IMPORTATION NÉCESSAIRE POUR DÉCODER LE JSON DU SECRET
+import json # <-- NÉCESSAIRE pour charger la chaîne JSON du secret
 from typing import List, Dict, Any, Tuple
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
@@ -30,118 +30,132 @@ COL_URL = 'URL'
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
+    Utilise la méthode la plus robuste : lire les secrets TOML à plat.
     """
     
-    if 'gcp_service_account' not in st.secrets:
-        print("DEBUG: Secret 'gcp_service_account' manquant.")
-        st.sidebar.error("❌ Secret 'gcp_service_account' manquant. L'application ne peut pas se connecter.")
-        return None
+    # Clés requises pour le compte de service
+    REQUIRED_GCP_KEYS = ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "client_x509_cert_url", "universe_domain"]
+    
+    service_account_info: Dict[str, str] = {}
 
     try:
-        # --- CORRECTION CRITIQUE DE LA CONNEXION ---
-        secret_content = st.secrets['gcp_service_account']
+        # Tenter la méthode la plus robuste : lire les clés individuelles (structure plate dans secrets.toml)
+        if all(key in st.secrets for key in REQUIRED_GCP_KEYS):
+             print("DEBUG: Utilisation des secrets GCP via la structure TOML plate.")
+             for key in REQUIRED_GCP_KEYS:
+                 service_account_info[key] = st.secrets[key]
         
-        # Votre secret est lu comme une chaîne (str), nous devons le convertir en dictionnaire (dict)
-        if isinstance(secret_content, str):
-            # Tente de décoder la chaîne JSON
-            service_account_info = json.loads(secret_content)
-        elif isinstance(secret_content, dict):
-            # Cas idéal : le secret est déjà un dict
-            service_account_info = secret_content
+        # Fallback pour l'ancienne méthode (chaîne JSON sous la clé 'gcp_service_account')
+        elif 'gcp_service_account' in st.secrets and isinstance(st.secrets['gcp_service_account'], str):
+            print("DEBUG: Utilisation des secrets GCP via la chaîne JSON ('gcp_service_account').")
+            json_key_string = st.secrets["gcp_service_account"]
+            # Ceci est la ligne qui échoue avec 'Invalid control character'
+            service_account_info = json.loads(json_key_string)
+            
         else:
-            raise TypeError("Secret 'gcp_service_account' n'est ni une chaîne JSON ni un dictionnaire.")
-            
-        # 1. Connexion et Ouverture de la feuille
+             st.error("🛑 Le secret de service GCP n'est pas configuré. Vérifiez que toutes les clés sont présentes.")
+             return []
+
+        if not service_account_info:
+            st.error("🛑 Le secret de service GCP n'est pas configuré. Vérifiez que toutes les clés sont présentes.")
+            return []
+
+        # Connexion à Google Sheets via le compte de service
+        # Cette ligne est le point de vérité pour le secret TOML.
         gc = gspread.service_account_from_dict(service_account_info)
-        # ----------------------------------------
-        
-        print("DEBUG: Connexion à Google Sheets réussie.")
-        
-        sh = gc.open_by_key(SPREADSHEET_ID)
-        worksheet = sh.worksheet(SHEET_NAME) 
-        print(f"DEBUG: Feuille '{SHEET_NAME}' ouverte.")
+        print("DEBUG: Connexion gspread réussie.")
 
-        # 2. Lecture des données dans un DataFrame
-        df_raw = gd.get_as_dataframe(worksheet, header=1)
-        
-        # --- LOG DE DÉBOGAGE CRITIQUE ---
-        print(f"DEBUG: Colonnes brutes lues par gspread-dataframe: {list(df_raw.columns)}")
-        # --- FIN LOG DE DÉBOGAGE CRITIQUE ---
+        # 3. Ouvrir le document et l'onglet
+        spreadsheet = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = spreadsheet.worksheet(SHEET_NAME)
+        print(f"DEBUG: Feuille de calcul '{SHEET_NAME}' ouverte.")
 
-        # 3. Nettoyage des noms de colonnes du DataFrame pour la recherche
-        found_model_col, found_url_col = None, None
-        
-        for col in df_raw.columns:
-            # Nettoyage des noms de colonnes
-            cleaned_col = str(col).strip().upper().replace(' ', '_').replace('-', '_').replace('É', 'E').replace('È', 'E')
-            if 'MODEL' in cleaned_col or 'MODELE' in cleaned_col:
-                found_model_col = col
-            if 'URL' in cleaned_col or 'LINK' in cleaned_col:
-                found_url_col = col
+        # 4. Lecture des données
+        df = gd.get_as_dataframe(worksheet, header=1) # On assume que la première ligne est l'en-tête
+        # ... (reste du code de lecture)
 
-        if not found_model_col or not found_url_col:
-            st.error(f"❌ Colonnes '{COL_MODEL}' ou '{COL_URL}' introuvables.")
-            st.warning(f"Le script a trouvé les colonnes : {list(df_raw.columns)}. Vérifiez que 'MODELE' et 'URL' sont présents.")
-            return None
-            
-        # Créer un DataFrame propre avec les deux colonnes trouvées
-        df = df_raw[[found_model_col, found_url_col]].copy()
-        df.columns = [COL_MODEL, COL_URL] # Renommer pour un accès facile
-        
-        # Supprimer les lignes entièrement vides (celles où les deux colonnes sont NaN)
-        df.dropna(how='all', inplace=True) 
-        
-        # 4. Extraction et validation des URLs
-        model_urls_list = []
-        for index, row in df.iterrows():
-            model_name = str(row[COL_MODEL]).strip()
-            url = str(row[COL_URL]).strip()
-            
-            # La validation des liens doit être stricte
-            if model_name and url.lower().startswith("http"):
-                model_urls_list.append((model_name, url))
+        print(f"DEBUG: Données chargées. {len(df)} lignes trouvées.")
 
+        # 5. Nettoyage et filtrage des URLs valides
+        df = df.dropna(subset=[COL_MODEL, COL_URL]).reset_index(drop=True)
+        # S'assurer que les URLs commencent par l'URL de base ou le protocole
+        df = df[df[COL_URL].str.startswith('http', na=False) | df[COL[URL].str.startswith('/', na=False)]]
         
-        if not model_urls_list:
-            # Cette erreur se déclenche si toutes les lignes sont invalides ou si le tableau est vide
-            print("DEBUG: La liste model_urls_list est vide après traitement.")
-            st.error("🛑 Impossible de lancer : La liste de liens chargée est vide. Vérifiez la feuille (Contenu ou URL).")
-            return None
-            
-        st.sidebar.success(f"✅ Chargement réussi : **{len(model_urls_list)}** liens chargés depuis Sheets.")
+        model_urls_to_scrape = list(zip(df[COL_MODEL], df[COL_URL]))
+
+        if not model_urls_to_scrape:
+            st.warning("⚠️ La feuille est vide ou ne contient aucun lien valide à scraper.")
         
-        return model_urls_list
+        print(f"DEBUG: **{len(model_urls_to_scrape)}** liens modèles à scraper trouvés après filtrage.")
+        return model_urls_to_scrape
+
+    except RuntimeError as re:
+        # Erreur spécifique levée pour le problème de parsing JSON
+        st.error(f"❌ Échec critique du chargement des secrets. Veuillez utiliser le format TOML simple (clé=valeur). Erreur : {re}")
+        return []
 
     except Exception as e:
-        # Affichage générique pour les erreurs de connexion/permission
-        st.sidebar.error(f"❌ Échec de la connexion Sheets. Vérifiez les permissions de partage (compte de service) et le Secret TOML. Erreur : {e}")
-        # Affichage de l'erreur dans la console pour un diagnostic précis
-        print(f"\n--- ERREUR CRITIQUE DANS load_model_urls_from_sheets ---\n{e}\n----------------------------------------------------")
-        return None
+        print(f"DEBUG: Échec de la connexion Sheets. Erreur : {e}")
+        # Message d'erreur ajusté pour l'étape de debug
+        st.error(f"❌ Échec de la connexion Sheets. Vérifiez les permissions de partage et le Secret TOML. Erreur : {e}")
+        return []
 
-# --- INTERFACE STREAMLIT PRINCIPALE ---
 
-st.set_page_config(page_title="Scraper Catalogue iPhone", layout="centered")
-st.title("Catalogue iPhone Visiodirect")
-st.caption("Synchronisation des liens via Google Sheets")
+# --- INTERFACE STREAMLIT ---
 
-# --- MENU LATÉRAL : PARAMÈTRES DE CALCUL ---
-with st.sidebar:
-    st.header("⚙️ Ajuster les Paramètres")
+st.set_page_config(
+    page_title="iPhone Spares Scraper",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.title("🤖 iPhone Spares Scraper & Repricing")
+st.subheader("Extraction des composants et calcul automatique des prix de vente.")
+
+
+# --- CONFIGURATION DANS LA BARRE LATÉRALE ---
+
+st.sidebar.header("Paramètres de Repricing")
+
+# 1. Marge Brute (multiplicateur)
+marge_brute = st.sidebar.slider(
+    'Marge Brute (Multiplicateur)', 
+    min_value=1.0, 
+    max_value=3.0, 
+    value=1.6, 
+    step=0.01,
+    help="Multiplie le prix d'achat HT pour obtenir le prix de vente HT avant Frais/TVA (ex: 1.6 = 60% de marge brute)."
+)
+
+# 2. Frais fixes de Main d'Œuvre
+frais_mo = st.sidebar.slider(
+    "Frais Fixes de Main d'Œuvre (€)", 
+    min_value=0.0, 
+    max_value=50.0, 
+    value=20.0, 
+    step=0.5,
+    help="Montant fixe ajouté au prix après l'application de la marge brute (ex: 20.0 €)."
+)
+
+# 3. Coefficient TVA
+tva_coeff = st.sidebar.slider(
+    'Coefficient TVA', 
+    min_value=1.0, 
+    max_value=1.3, 
+    value=1.2, 
+    step=0.01,
+    help="Coefficient appliqué pour obtenir le prix TTC (ex: 1.2 = 20% de TVA)."
+)
+
+st.sidebar.info("Cliquez sur 'Lancer le Scraping' pour appliquer ces paramètres.")
+
+
+# --- BOUTON DE DÉMARRAGE ---
+
+if st.button("▶️ Lancer le Scraping", type="primary"):
     
-    marge_brute = st.slider("Coefficient de Marge Brute", 1.0, 3.0, value=1.60, step=0.01)
-    frais_mo = st.number_input("Frais Fixes de Main d'Oeuvre (€)", 0.0, 100.0, value=20.0, step=1.0)
-    tva_coeff = st.number_input("Coefficient de TVA (Ex: 1.20 pour 20%)", 1.0, 3.0, value=1.20, step=0.01)
+    model_urls_to_scrape = load_model_urls_from_sheets()
     
-    st.markdown("---")
-    st.header("Statut de la Connexion")
-    # Lance la vérification de la connexion dès le chargement de l'interface
-    model_urls_on_load = load_model_urls_from_sheets()
-
-if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
-    
-    model_urls_to_scrape = model_urls_on_load 
-
     if not model_urls_to_scrape:
         st.error("🛑 Impossible de lancer : Aucun lien valide n'a pu être chargé depuis Google Sheets.")
     else:
@@ -159,23 +173,22 @@ if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
         log_status.update(label="Traitement final des données...", state="running", expanded=True)
         
         # 3. Exportation et Repricing (utilise les paramètres du sidebar)
-        # CORRECTION DE L'APPEL : on passe les variables ajustables en paramètres
         csv_output = export_to_csv(
             toutes_les_donnees, 
-            marge_brute, # On passe la valeur du slider
-            frais_mo,    # On passe la valeur du number_input
-            tva_coeff    # On passe la valeur du number_input
+            marge_brute, 
+            frais_mo, 
+            tva_coeff
         )
         
         if csv_output:
             log_status.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants extraits et calculés.")
             
             st.download_button(
-                label=" Télécharger le CSV final",
+                label=" ⬇️ Télécharger le CSV final",
                 data=csv_output,
                 file_name="resultats_catalogue_iphone.csv",
                 mime="text/csv",
+                type="secondary"
             )
-            st.balloons()
         else:
-            log_status.error("Erreur lors de la génération du fichier CSV (aucune donnée trouvée).")
+            log_status.error("❌ Échec de la génération du CSV.")
