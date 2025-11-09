@@ -1,4 +1,4 @@
-import requests
+Import requests
 from bs4 import BeautifulSoup
 import re
 import csv
@@ -38,11 +38,46 @@ GSHEET_NAME: str = "Resultats_Scraping_iPhone_Automatise" # <--- IMPORTANT : CHA
 
 @st.cache_data 
 def clean_price(price_raw: str) -> float:
-    """Nettoie une chaîne de prix pour la convertir en nombre flottant (float)."""
+    """
+    Nettoie une chaîne de prix pour la convertir en nombre flottant (float).
+    
+    CORRECTION MAJEURE: Divise par 100 la valeur finale pour corriger 
+    le décalage x100 si le site renvoie le prix en centimes sans séparateur.
+    """
     if price_raw == "N/A": return 0.0
-    cleaned_price = price_raw.lower().replace('€', '').replace('ttc', '').replace('.', '').replace(',', '.').strip()
-    try: return float(cleaned_price)
-    except ValueError: return 0.0
+    
+    # Étape 1: Nettoyage des caractères non numériques et uniformisation des décimales
+    cleaned_price_str = price_raw.lower().replace('€', '').replace('ttc', '').strip()
+    
+    # Logique pour gérer les formats:
+    if ',' in cleaned_price_str and '.' in cleaned_price_str:
+        # Format FR avec séparateur de milliers (.) et séparateur décimal (,)
+        cleaned_price_str = cleaned_price_str.replace('.', '').replace(',', '.')
+    elif ',' in cleaned_price_str:
+        # Format FR simple (ex: 12,34)
+        cleaned_price_str = cleaned_price_str.replace(',', '.')
+    elif '.' in cleaned_price_str and cleaned_price_str.count('.') > 1:
+        # Format EN avec séparateur de milliers (,) et décimal (.) - Peu probable ici, mais sécurisé
+        cleaned_price_str = cleaned_price_str.replace('.', '') 
+    elif '.' in cleaned_price_str and cleaned_price_str.count('.') == 1:
+        # Format EN simple (ex: 12.34) - Laisser le point décimal
+
+    cleaned_price_str = re.sub(r'[^\d.]', '', cleaned_price_str) # Suppression finale de tout sauf chiffres et point
+
+    try: 
+        final_price = float(cleaned_price_str)
+        
+        # --- CORRECTION APPLIQUÉE ICI ---
+        # Si le prix est > 100, on présume que la valeur est en centimes et nécessite une division par 100
+        # Cette condition est une sécurité pour les prix courants.
+        if final_price > 1000.0 and final_price > 100 * len(price_raw): 
+             # On applique la division si le nombre est très grand et ne contient pas de décimales apparentes
+             return final_price / 100.0
+        # --- FIN CORRECTION ---
+        
+        return final_price
+    except ValueError: 
+        return 0.0
 
 def get_soup(url: str, max_retries: int = 3, log_func=st.warning) -> BeautifulSoup | None:
     """Télécharge l'URL et retourne l'objet Beautiful Soup, avec des tentatives en cas d'échec."""
