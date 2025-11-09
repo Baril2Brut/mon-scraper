@@ -1,5 +1,5 @@
 # =================================================================
-# Fichier: app.py (Interface Streamlit et Connexion Sheets)
+# Fichier: App.py (Interface Streamlit et Connexion Sheets)
 # =================================================================
 import streamlit as st
 import gspread 
@@ -7,6 +7,7 @@ import gspread_dataframe as gd
 import pandas as pd 
 import time
 import random
+import json # <--- NOUVEL IMPORTATION NÉCESSAIRE POUR DÉCODER LE JSON DU SECRET
 from typing import List, Dict, Any, Tuple
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
@@ -29,7 +30,6 @@ COL_URL = 'URL'
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    Ajout de logs de console (print) pour le débogage.
     """
     
     if 'gcp_service_account' not in st.secrets:
@@ -38,8 +38,23 @@ def load_model_urls_from_sheets():
         return None
 
     try:
+        # --- CORRECTION CRITIQUE DE LA CONNEXION ---
+        secret_content = st.secrets['gcp_service_account']
+        
+        # Votre secret est lu comme une chaîne (str), nous devons le convertir en dictionnaire (dict)
+        if isinstance(secret_content, str):
+            # Tente de décoder la chaîne JSON
+            service_account_info = json.loads(secret_content)
+        elif isinstance(secret_content, dict):
+            # Cas idéal : le secret est déjà un dict
+            service_account_info = secret_content
+        else:
+            raise TypeError("Secret 'gcp_service_account' n'est ni une chaîne JSON ni un dictionnaire.")
+            
         # 1. Connexion et Ouverture de la feuille
-        gc = gspread.service_account_from_dict(st.secrets['gcp_service_account']) 
+        gc = gspread.service_account_from_dict(service_account_info)
+        # ----------------------------------------
+        
         print("DEBUG: Connexion à Google Sheets réussie.")
         
         sh = gc.open_by_key(SPREADSHEET_ID)
@@ -57,6 +72,7 @@ def load_model_urls_from_sheets():
         found_model_col, found_url_col = None, None
         
         for col in df_raw.columns:
+            # Nettoyage des noms de colonnes
             cleaned_col = str(col).strip().upper().replace(' ', '_').replace('-', '_').replace('É', 'E').replace('È', 'E')
             if 'MODEL' in cleaned_col or 'MODELE' in cleaned_col:
                 found_model_col = col
@@ -143,11 +159,12 @@ if st.button("LANCER LE SCRAPING COMPLET", type="primary"):
         log_status.update(label="Traitement final des données...", state="running", expanded=True)
         
         # 3. Exportation et Repricing (utilise les paramètres du sidebar)
+        # CORRECTION DE L'APPEL : on passe les variables ajustables en paramètres
         csv_output = export_to_csv(
             toutes_les_donnees, 
-            marge_brute, 
-            frais_mo, 
-            tva_coeff
+            marge_brute, # On passe la valeur du slider
+            frais_mo,    # On passe la valeur du number_input
+            tva_coeff    # On passe la valeur du number_input
         )
         
         if csv_output:
