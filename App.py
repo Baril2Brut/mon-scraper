@@ -1,4 +1,4 @@
-Import requests
+import requests
 from bs4 import BeautifulSoup
 import re
 import csv
@@ -41,8 +41,8 @@ def clean_price(price_raw: str) -> float:
     """
     Nettoie une chaîne de prix pour la convertir en nombre flottant (float).
     
-    CORRECTION MAJEURE: Divise par 100 la valeur finale pour corriger 
-    le décalage x100 si le site renvoie le prix en centimes sans séparateur.
+    CORRECTION MAJEURE: Ajoute une logique de division par 100 si la valeur 
+    extraite semble être en centimes (ce qui cause le décalage x100).
     """
     if price_raw == "N/A": return 0.0
     
@@ -68,10 +68,9 @@ def clean_price(price_raw: str) -> float:
         final_price = float(cleaned_price_str)
         
         # --- CORRECTION APPLIQUÉE ICI ---
-        # Si le prix est > 100, on présume que la valeur est en centimes et nécessite une division par 100
-        # Cette condition est une sécurité pour les prix courants.
-        if final_price > 1000.0 and final_price > 100 * len(price_raw): 
-             # On applique la division si le nombre est très grand et ne contient pas de décimales apparentes
+        # Si le prix est > 100 et que l'original ne contenait pas de point/virgule, on divise par 100
+        # pour corriger la lecture en centimes.
+        if final_price > 1000.0 and (not any(c in price_raw for c in [',', '.'])): 
              return final_price / 100.0
         # --- FIN CORRECTION ---
         
