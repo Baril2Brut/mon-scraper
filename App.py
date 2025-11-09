@@ -29,27 +29,33 @@ COL_URL = 'URL'
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    La fonction est optimisée pour une robustesse maximale des en-têtes.
+    Ajout de logs de console (print) pour le débogage.
     """
     
     if 'gcp_service_account' not in st.secrets:
+        print("DEBUG: Secret 'gcp_service_account' manquant.")
         st.sidebar.error("❌ Secret 'gcp_service_account' manquant. L'application ne peut pas se connecter.")
         return None
 
     try:
         # 1. Connexion et Ouverture de la feuille
         gc = gspread.service_account_from_dict(st.secrets['gcp_service_account']) 
+        print("DEBUG: Connexion à Google Sheets réussie.")
+        
         sh = gc.open_by_key(SPREADSHEET_ID)
         worksheet = sh.worksheet(SHEET_NAME) 
+        print(f"DEBUG: Feuille '{SHEET_NAME}' ouverte.")
 
         # 2. Lecture des données dans un DataFrame
         df_raw = gd.get_as_dataframe(worksheet, header=1)
         
+        # --- LOG DE DÉBOGAGE CRITIQUE ---
+        print(f"DEBUG: Colonnes brutes lues par gspread-dataframe: {list(df_raw.columns)}")
+        # --- FIN LOG DE DÉBOGAGE CRITIQUE ---
+
         # 3. Nettoyage des noms de colonnes du DataFrame pour la recherche
-        column_map = {}
         found_model_col, found_url_col = None, None
         
-        # Chercher les colonnes "MODELE" et "URL" malgré les accents/majuscules/espaces
         for col in df_raw.columns:
             cleaned_col = str(col).strip().upper().replace(' ', '_').replace('-', '_').replace('É', 'E').replace('È', 'E')
             if 'MODEL' in cleaned_col or 'MODELE' in cleaned_col:
@@ -69,7 +75,7 @@ def load_model_urls_from_sheets():
         # Supprimer les lignes entièrement vides (celles où les deux colonnes sont NaN)
         df.dropna(how='all', inplace=True) 
         
-        # 4. Extraction et validation des URLs (plus simple)
+        # 4. Extraction et validation des URLs
         model_urls_list = []
         for index, row in df.iterrows():
             model_name = str(row[COL_MODEL]).strip()
@@ -82,6 +88,7 @@ def load_model_urls_from_sheets():
         
         if not model_urls_list:
             # Cette erreur se déclenche si toutes les lignes sont invalides ou si le tableau est vide
+            print("DEBUG: La liste model_urls_list est vide après traitement.")
             st.error("🛑 Impossible de lancer : La liste de liens chargée est vide. Vérifiez la feuille (Contenu ou URL).")
             return None
             
@@ -92,6 +99,8 @@ def load_model_urls_from_sheets():
     except Exception as e:
         # Affichage générique pour les erreurs de connexion/permission
         st.sidebar.error(f"❌ Échec de la connexion Sheets. Vérifiez les permissions de partage (compte de service) et le Secret TOML. Erreur : {e}")
+        # Affichage de l'erreur dans la console pour un diagnostic précis
+        print(f"\n--- ERREUR CRITIQUE DANS load_model_urls_from_sheets ---\n{e}\n----------------------------------------------------")
         return None
 
 # --- INTERFACE STREAMLIT PRINCIPALE ---
