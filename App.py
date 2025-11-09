@@ -16,7 +16,7 @@ from scraper_iphone import scrape_model_page, export_to_csv
 # ID de votre feuille de calcul (extrait de l'URL)
 SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84" 
 # Nom de l'onglet (IMPORTANT : sensible à la casse)
-SHEET_NAME = "Feuille 1" 
+SHEET_NAME = "Configuration_Liens_Scraper" 
 
 # --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS (AVEC gspread-dataframe) ---
 
