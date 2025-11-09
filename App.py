@@ -61,7 +61,8 @@ def clean_price(price_raw: str) -> float:
         cleaned_price_str = cleaned_price_str.replace('.', '') 
     elif '.' in cleaned_price_str and cleaned_price_str.count('.') == 1:
         # Format EN simple (ex: 12.34) - Laisser le point décimal
-
+        pass # <-- Correction de l'IndentationError
+        
     cleaned_price_str = re.sub(r'[^\d.]', '', cleaned_price_str) # Suppression finale de tout sauf chiffres et point
 
     try: 
