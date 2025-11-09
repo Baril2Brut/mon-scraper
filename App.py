@@ -47,8 +47,8 @@ def load_model_urls_from_sheets():
         
         # 5. Définition des noms de colonnes (doivent correspondre EXACTEMENT)
         # Utilisez les noms sans accent et sans caractère spécial pour la robustesse.
-        COL_MODEL = "MODELE" 
-        COL_URL = "URL"
+        COL_MODEL = 'MODELE'
+        COL_URL = 'URL'
         
         # Nettoyage des noms de colonnes pour forcer la correspondance (même si gd est plus tolérant)
         df.columns = [col.upper().replace(' ', '_').strip() for col in df.columns]
