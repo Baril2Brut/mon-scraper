@@ -42,13 +42,16 @@ def load_model_urls_from_sheets():
     try:
         creds_json = st.secrets['gcp_service_account']
         
-        # --- SOLUTION DE CONTOURNEMENT ROBUSTE (IO Stream) ---
-        # Cette méthode convertit le dictionnaire de secrets en JSON, puis 
-        # en objet "fichier en mémoire" (StringIO), ce qui est le format le plus sûr
-        # pour gspread afin d'éviter les erreurs de "stream" ou de "padding".
+        # --- CORRECTION DE L'ERREUR 'AttrDict is not JSON serializable' ---
+        # Nous convertissons explicitement l'objet Streamlit AttrDict en un dictionnaire standard.
         import json
-        json_string = json.dumps(creds_json)
         
+        # 🐛 FIX: Convertir l'objet secret en dictionnaire Python standard
+        creds_dict = dict(creds_json)
+        
+        json_string = json.dumps(creds_dict)
+        
+        # Utilisation d'un objet de type fichier en mémoire (StringIO)
         creds_file_like = io.StringIO(json_string)
         
         # gspread.service_account peut lire un chemin de fichier OU un objet de type fichier
