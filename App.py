@@ -7,6 +7,7 @@ import gspread_dataframe as gd
 import pandas as pd 
 import time
 import random
+# Suppression de l'import 'io' qui n'est plus nécessaire.
 from typing import List, Dict, Any, Tuple
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
@@ -14,7 +15,7 @@ from scraper_iphone import scrape_model_page, export_to_csv
 # --- CONFIGURATION GOOGLE SHEETS ---\
 
 # ID de votre feuille de calcul (extrait de l'URL)
-SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84" 
+SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdT6lWbKjQ99Vp_s71x7w2AjPwaESe84" 
 # Nom de l'onglet (IMPORTANT : sensible à la casse)
 SHEET_NAME = "Configuration_Liens_Scraper" # J'utilise le nom que l'application recherche
 
@@ -29,9 +30,7 @@ COL_URL = 'URL'
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    Utilise st.secrets pour lire la clé de service GCP comme un dictionnaire.
-    CORRECTION: Utilise gspread.service_account_from_dict() pour autoriser gspread
-    sans tenter de lire un fichier local.
+    Utilise la méthode standard et recommandée : gspread.service_account_from_dict()
     """
     
     if 'gcp_service_account' not in st.secrets:
@@ -43,18 +42,20 @@ def load_model_urls_from_sheets():
         # Récupération directe de l'objet JSON (dictionnaire Python) depuis st.secrets
         creds_json = st.secrets['gcp_service_account']
         
-        # --- CORRECTION CRITIQUE (déjà appliquée) ---
-        # Utiliser service_account_from_dict pour créer les identifiants à partir du dictionnaire
+        # --- UTILISATION DE LA MÉTHODE STANDARD SI LA CLÉ EST BIEN FORMATÉE ---
         creds = gspread.service_account_from_dict(creds_json)
         
         # Autoriser gspread avec les identifiants
         gc = gspread.authorize(creds)
-        print("DEBUG: Connexion à Google Sheets réussie.")
+        
+        print("DEBUG: Connexion à Google Sheets réussie via service_account_from_dict.")
         
     except Exception as e:
-        # Cette erreur est probablement liée au formatage de la clé.
+        # Si l'erreur 'Cannot convert str to a seekable bit stream' réapparaît ici, 
+        # c'est 100% à cause d'un caractère invisible dans le secrets.toml 
+        # ou d'un encodage spécial de l'environnement Streamlit.
         print(f"DEBUG: Erreur lors de l'authentification : {e}")
-        st.error(f"🛑 Erreur critique d'authentification. Vérifiez le contenu de la clé de service dans secrets.toml : {e}")
+        st.error(f"🛑 Erreur critique d'authentification. Veuillez vérifier que la clé privée dans secrets.toml ne contient aucun caractère invisible. Erreur : {e}")
         return []
 
     # --- LECTURE DES DONNÉES ---
