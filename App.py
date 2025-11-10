@@ -7,7 +7,7 @@ import gspread_dataframe as gd
 import pandas as pd 
 import time
 import random
-# Suppression de l'import 'io' qui n'est plus nécessaire.
+import io # <-- Import nécessaire pour la méthode robuste de connexion
 from typing import List, Dict, Any, Tuple
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
@@ -15,7 +15,7 @@ from scraper_iphone import scrape_model_page, export_to_csv
 # --- CONFIGURATION GOOGLE SHEETS ---\
 
 # ID de votre feuille de calcul (extrait de l'URL)
-SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdT6lWbKjQ99Vp_s71x7w2AjPwaESe84" 
+SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84" 
 # Nom de l'onglet (IMPORTANT : sensible à la casse)
 SHEET_NAME = "Configuration_Liens_Scraper" # J'utilise le nom que l'application recherche
 
@@ -30,7 +30,8 @@ COL_URL = 'URL'
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    Utilise la méthode standard et recommandée : gspread.service_account_from_dict()
+    Utilise la méthode robuste io.StringIO pour contourner les problèmes de formatage
+    de la clé privée dans l'environnement Streamlit.
     """
     
     if 'gcp_service_account' not in st.secrets:
@@ -39,21 +40,23 @@ def load_model_urls_from_sheets():
         return []
     
     try:
-        # Récupération directe de l'objet JSON (dictionnaire Python) depuis st.secrets
         creds_json = st.secrets['gcp_service_account']
         
-        # --- UTILISATION DE LA MÉTHODE STANDARD SI LA CLÉ EST BIEN FORMATÉE ---
-        creds = gspread.service_account_from_dict(creds_json)
+        # --- SOLUTION DE CONTOURNEMENT ROBUSTE (IO Stream) ---
+        # Cette méthode convertit le dictionnaire de secrets en JSON, puis 
+        # en objet "fichier en mémoire" (StringIO), ce qui est le format le plus sûr
+        # pour gspread afin d'éviter les erreurs de "stream" ou de "padding".
+        import json
+        json_string = json.dumps(creds_json)
         
-        # Autoriser gspread avec les identifiants
-        gc = gspread.authorize(creds)
+        creds_file_like = io.StringIO(json_string)
         
-        print("DEBUG: Connexion à Google Sheets réussie via service_account_from_dict.")
+        # gspread.service_account peut lire un chemin de fichier OU un objet de type fichier
+        gc = gspread.service_account(file_path=creds_file_like)
+        
+        print("DEBUG: Connexion à Google Sheets réussie via StringIO (méthode robuste).")
         
     except Exception as e:
-        # Si l'erreur 'Cannot convert str to a seekable bit stream' réapparaît ici, 
-        # c'est 100% à cause d'un caractère invisible dans le secrets.toml 
-        # ou d'un encodage spécial de l'environnement Streamlit.
         print(f"DEBUG: Erreur lors de l'authentification : {e}")
         st.error(f"🛑 Erreur critique d'authentification. Veuillez vérifier que la clé privée dans secrets.toml ne contient aucun caractère invisible. Erreur : {e}")
         return []
