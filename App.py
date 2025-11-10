@@ -3,19 +3,20 @@
 # =================================================================
 import streamlit as st
 import gspread 
+import json
+import base64
 import gspread_dataframe as gd 
 import pandas as pd 
 import time
-import random 
-# Retrait des imports inutiles comme io et json
 from typing import List, Dict, Any, Tuple
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
+import re # Nouveau : pour le nettoyage agressif
 
 # --- CONFIGURATION GOOGLE SHEETS ---
 
 # ID de votre feuille de calcul (extrait de l'URL)
-SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shHhm7w2AjPwaESe84" 
+SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84" 
 # Nom de l'onglet (IMPORTANT : sensible à la casse)
 SHEET_NAME = "Configuration_Liens_Scraper" 
 
@@ -23,7 +24,7 @@ SHEET_NAME = "Configuration_Liens_Scraper"
 COL_MODEL = 'MODELE'
 COL_URL = 'URL'
 
-# Délai fixe après chaque scraping (pour ne pas surcharger le site cible)
+# Délais de scraping (pour être plus doux avec le site)
 SCRAPING_DELAY_SECONDS = 2.0
 
 
@@ -33,122 +34,131 @@ SCRAPING_DELAY_SECONDS = 2.0
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    Utilise la fonction gspread.service_account_from_dict(), la méthode la plus 
-    fiable pour les identifiants chargés en mémoire depuis Streamlit secrets.
+    Utilise la clé de service encodée en Base64 depuis st.secrets.
     """
     
-    if 'gcp_service_account' not in st.secrets:
-        print("DEBUG: Secret 'gcp_service_account' non trouvé dans st.secrets.")
-        st.error("🛑 Erreur d'authentification: La section '[gcp_service_account]' est manquante dans secrets.toml.")
+    # --- 1. Lecture et Décodage Base64 de la Clé ---
+    if 'gcp_encoded_key' not in st.secrets:
+        st.error("🛑 Clé 'gcp_encoded_key' manquante dans secrets.toml. Veuillez insérer la chaîne Base64.")
+        print("DEBUG: Secret 'gcp_encoded_key' not found.")
         return []
-    
+
+    encoded_key = st.secrets['gcp_encoded_key']
+
+    # CRITIQUE : Nettoyage agressif de la chaîne Base64
+    # 1. On retire les espaces blancs au début et à la fin (.strip())
+    # 2. On retire tous les caractères qui ne sont PAS des caractères Base64 valides
+    # (A-Z, a-z, 0-9, +, /, ou = pour le padding).
     try:
-        creds_json = st.secrets['gcp_service_account']
+        cleaned_encoded_key = encoded_key.strip()
+        cleaned_encoded_key = re.sub(r'[^A-Za-z0-9+/=]', '', cleaned_encoded_key)
         
-        # Étape 1: Conversion en dictionnaire Python standard.
-        creds_dict = dict(creds_json)
+        # Le nettoyage doit être appliqué avant le décodage
+        service_account_info_bytes = base64.b64decode(cleaned_encoded_key)
         
-        # Utiliser la méthode native gspread pour l'authentification à partir d'un dictionnaire Python.
-        gc = gspread.service_account_from_dict(creds_dict)
+        # Décodage des bytes en chaîne JSON, puis chargement en dictionnaire Python
+        service_account_info_str = service_account_info_bytes.decode('utf-8')
+        creds_dict = json.loads(service_account_info_str)
         
-        print("DEBUG: Connexion à Google Sheets réussie via service_account_from_dict.")
-        
+        print("DEBUG: Clé de service décodée avec succès. Tentative d'authentification...")
+
+    except base64.binascii.Error as e:
+        # Affiche la longueur nettoyée pour le débogage si l'erreur persiste
+        st.error(f"🛑 Erreur critique d'authentification. L'encodage Base64 est corrompu (Incorrect padding). Longueur de la chaîne nettoyée: {len(cleaned_encoded_key)}")
+        print(f"ERROR: Base64 decoding failed. Error: {e}")
+        return []
     except Exception as e:
-        print(f"DEBUG: Erreur lors de l'authentification : {e}")
-        # Afficher un message plus général car l'erreur est maintenant interne à gspread
-        st.error(f"🛑 Erreur critique d'authentification. Vérifiez la clé de service dans secrets.toml et les autorisations de la feuille. Erreur : {e}")
+        st.error(f"🛑 Erreur de décodage JSON ou Base64 inattendue. Erreur : {e}")
+        print(f"ERROR: Unexpected decoding error. {e}")
         return []
 
-    # --- LECTURE DES DONNÉES ---
+    # --- 2. Authentification gspread ---
     try:
-        # Ouvrir la feuille de calcul
-        wks = gc.open_by_id(SPREADSHEET_ID).worksheet(SHEET_NAME)
-        
-        # Lire les données dans un DataFrame
-        df = gd.get_as_dataframe(wks, usecols=[COL_MODEL, COL_URL], header=0)
-        
-        # Nettoyage et filtrage
-        df = df.dropna(subset=[COL_MODEL, COL_URL]).reset_index(drop=True)
-        # Supprime les lignes où l'URL n'est pas une chaîne valide ou est vide
-        df = df[df[COL_URL].astype(str).str.startswith('http')].reset_index(drop=True)
-        
-        print(f"DEBUG: {len(df)} liens valides chargés depuis la feuille '{SHEET_NAME}'.")
+        # Authentification avec le dictionnaire chargé en mémoire
+        gc = gspread.service_account_from_dict(creds_dict)
+        print("DEBUG: Authentification gspread réussie.")
 
-        # Convertir en liste de tuples (MODÈLE, URL)
-        model_urls_to_scrape: List[Tuple[str, str]] = list(zip(
-            df[COL_MODEL].astype(str).tolist(), 
-            df[COL_URL].astype(str).tolist() # <-- CORRECTION DE LA PARENTHÈSE ICI
+        # Ouverture de la feuille
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        ws = sh.worksheet(SHEET_NAME)
+        print(f"DEBUG: Ouverture de la feuille '{SHEET_NAME}' réussie.")
+        
+        # Lecture en DataFrame
+        df = gd.get_as_dataframe(ws)
+
+        # Nettoyage et filtrage : retire les lignes vides ou sans URL
+        df = df.dropna(subset=[COL_MODEL, COL_URL], how='all')
+        df = df[df[COL_URL].astype(str).str.startswith('http')].copy()
+
+        # Retourne les paires (MODELE, URL)
+        model_urls = list(zip(
+            df[COL_MODEL].astype(str).tolist(),
+            df[COL_URL].astype(str).tolist()
         ))
         
-        return model_urls_to_scrape
-    
+        print(f"DEBUG: {len(model_urls)} URLs valides chargées.")
+        return model_urls
+        
+    except gspread.exceptions.NoValidUrlKeyFound:
+        st.error("🛑 Erreur : L'ID de la feuille de calcul (SPREADSHEET_ID) n'est pas valide ou les autorisations ne sont pas définies.")
+        print("ERROR: Invalid Spreadsheet ID or permissions are wrong.")
+        return []
     except gspread.exceptions.WorksheetNotFound:
-        print(f"DEBUG: Erreur de feuille: L'onglet '{SHEET_NAME}' est introuvable.")
-        st.error(f"🛑 Erreur: L'onglet Google Sheets **'{SHEET_NAME}'** est introuvable. Vérifiez l'orthographe (sensible à la casse).")
+        st.error(f"🛑 Erreur : L'onglet '{SHEET_NAME}' n'existe pas dans la feuille de calcul.")
+        print(f"ERROR: Worksheet '{SHEET_NAME}' not found.")
         return []
     except Exception as e:
-        print(f"DEBUG: Erreur lors de la lecture de la feuille: {e}")
-        st.error(f"🛑 Erreur lors du chargement des données depuis Google Sheets : {e}")
+        st.error(f"🛑 Échec de la connexion à Google Sheets. Vérifiez les autorisations du compte de service. Erreur : {e}")
+        print(f"ERROR: Google Sheets connection failed. {e}")
         return []
 
 
-# --- INTERFACE STREAMLIT PRINCIPALE ---
+# --- LOGIQUE DE L'APPLICATION STREAMLIT ---
 
 st.set_page_config(
-    page_title="VisioDirect Scraper",
-    page_icon="📱",
+    page_title="Scraper de Catalogue iPhone (VisioDirect)", 
     layout="wide"
 )
 
-st.title("💰 Outil de Repricing & Scraping de Composants iPhone")
-st.markdown("Cet outil se connecte à Google Sheets, scrape les prix pour les liens fournis, et applique votre stratégie de marge.")
-
-# --- SIDEBAR (PARAMÈTRES DE REPRICING) ---
-
+# Sidebar pour les paramètres (Repricing)
 st.sidebar.title("🛠️ Paramètres de Repricing")
 
-# 1. Marge brute (Multiplicateur)
-st.sidebar.subheader("1. Marge Brute")
+# Valeurs par défaut des paramètres du scraper (synchronisées avec scraper_iphone.py)
+DEFAULT_MARGE = 1.60
+DEFAULT_FRAIS_MO = 20.0
+DEFAULT_TVA = 1.20
+
 marge_brute = st.sidebar.slider(
-    "Multiplicateur de Marge Brute (1.x)",
-    min_value=1.1, 
-    max_value=2.5, 
-    value=1.60, 
-    step=0.01,
-    help="Exemple : 1.60 pour 60% de marge brute sur le prix fournisseur HT."
+    'Marge Brute (Multiplicateur)', 
+    min_value=1.1, max_value=2.5, 
+    value=DEFAULT_MARGE, step=0.01,
+    help=f"Ex: 1.60 = 60% de marge sur le coût fournisseur HT."
 )
-st.sidebar.info(f"Marge Nette : **{((marge_brute - 1) * 100):.0f}%**")
-
-# 2. Frais fixes (Main d'Œuvre)
-st.sidebar.subheader("2. Frais Fixes M.O.")
 frais_mo = st.sidebar.number_input(
-    "Frais de Main d'Œuvre fixes (€ HT)",
-    min_value=0.0,
-    value=20.0,
-    step=1.0,
-    format="%.2f",
-    help="Ces frais HT sont ajoutés à chaque composant pour calculer le prix intermédiaire."
+    "Frais de Main d'Œuvre Fixes (€ HT)", 
+    min_value=0.0, 
+    value=DEFAULT_FRAIS_MO, 
+    step=5.0
 )
-
-# 3. TVA
-st.sidebar.subheader("3. Taux de TVA")
 tva_coeff = st.sidebar.slider(
-    "Coefficient TVA (1.xx)",
-    min_value=1.00,
-    max_value=1.30,
-    value=1.20,
-    step=0.01,
-    help="Exemple : 1.20 pour 20% de TVA. Ce coefficient est appliqué à la fin pour le Prix Client TTC."
+    'Coefficient TVA (Multiplicateur)', 
+    min_value=1.0, max_value=1.3, 
+    value=DEFAULT_TVA, step=0.01,
+    help=f"Ex: 1.20 = 20% de TVA pour convertir HT en TTC."
 )
+st.sidebar.markdown("---")
 
-
-# --- LOGIQUE PRINCIPALE ---
-
-if st.button("▶️ Démarrer le Scraping et le Repricing"):
+# Fonction pour le bouton de lancement
+if st.sidebar.button("⚙️ Lancer le Scraping"):
+    # Réinitialise le cache pour forcer la relecture des secrets (important si les secrets sont modifiés)
+    load_model_urls_from_sheets.clear()
     
-    # 1. Chargement des URLs
+    st.title("🤖 Scraper de Catalogue Pièces Détachées")
+    st.markdown("---")
+    
+    # 1. Chargement des liens
     model_urls_to_scrape = load_model_urls_from_sheets()
-    
+
     if not model_urls_to_scrape:
         st.error("🛑 Impossible de lancer : Aucun lien valide n'a pu être chargé depuis Google Sheets.")
     else:
@@ -159,7 +169,7 @@ if st.button("▶️ Démarrer le Scraping et le Repricing"):
         
         # 2. Boucle et appelle la fonction de scraping
         for model_name, model_url in model_urls_to_scrape:
-            # Délai entre les modèles
+            # Délai fixe pour être poli avec le serveur
             time.sleep(SCRAPING_DELAY_SECONDS) 
             scrape_model_page(model_name, model_url, toutes_les_donnees, log_status) 
         
@@ -177,14 +187,22 @@ if st.button("▶️ Démarrer le Scraping et le Repricing"):
             log_status.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants extraits et calculés.")
             
             st.download_button(
-                label=" ⬇️ Télécharger le CSV final",
+                label="📥 Télécharger le CSV final",
                 data=csv_output,
                 file_name="resultats_catalogue_iphone.csv",
-                mime="text/csv",
-                key='download-csv-key',
+                mime="text/csv;charset=utf-8-sig",
                 use_container_width=True
             )
-            
-            st.success("Fichier CSV généré. Vous pouvez le télécharger ci-dessus.")
         else:
-            log_status.error("❌ Échec de l'exportation du CSV. Aucune donnée n'a été récupérée.")
+            log_status.error("❌ Échec de la génération du CSV. Le scraping n'a retourné aucune donnée.")
+            
+# Interface par défaut
+if 'gcp_encoded_key' not in st.secrets:
+    st.title("🤖 Scraper de Catalogue Pièces Détachées (Configuration requise)")
+    st.warning("Veuillez configurer votre clé de service Google dans le fichier `.streamlit/secrets.toml` sous la clé `gcp_encoded_key` pour démarrer.")
+    st.code('gcp_encoded_key = "VOTRE_CHAINE_BASE64_COMPLETE"')
+elif st.session_state.get('scraped', False) is False:
+    st.title("🤖 Scraper de Catalogue Pièces Détachées")
+    st.info("Cliquez sur **Lancer le Scraping** dans la barre latérale pour démarrer le processus.")
+    # On fait un appel initial pour vérifier l'authentification et afficher les erreurs plus tôt
+    load_model_urls_from_sheets()
