@@ -6,25 +6,29 @@ import gspread
 import gspread_dataframe as gd 
 import pandas as pd 
 import time
-import random
-import io # <-- Import nécessaire pour la méthode robuste de connexion
+import random 
+import io 
+import json # Ajout de json ici
 from typing import List, Dict, Any, Tuple
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
 
-# --- CONFIGURATION GOOGLE SHEETS ---\
+# --- CONFIGURATION GOOGLE SHEETS ---
 
 # ID de votre feuille de calcul (extrait de l'URL)
-SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84" 
+SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shHhm7w2AjPwaESe84" 
 # Nom de l'onglet (IMPORTANT : sensible à la casse)
-SHEET_NAME = "Configuration_Liens_Scraper" # J'utilise le nom que l'application recherche
+SHEET_NAME = "Configuration_Liens_Scraper" 
 
 # Noms de colonnes cibles
 COL_MODEL = 'MODELE'
 COL_URL = 'URL'
 
+# Délai fixe après chaque scraping (pour ne pas surcharger le site cible)
+SCRAPING_DELAY_SECONDS = 2.0
 
-# --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS (AVEC gspread-dataframe) ---\
+
+# --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS (AVEC gspread-dataframe) ---
 
 @st.cache_data(ttl=600, show_spinner="Chargement et vérification des liens depuis Google Sheets...") 
 def load_model_urls_from_sheets():
@@ -42,11 +46,7 @@ def load_model_urls_from_sheets():
     try:
         creds_json = st.secrets['gcp_service_account']
         
-        # --- CORRECTION DE L'ERREUR 'AttrDict is not JSON serializable' ---
-        # Nous convertissons explicitement l'objet Streamlit AttrDict en un dictionnaire standard.
-        import json
-        
-        # 🐛 FIX: Convertir l'objet secret en dictionnaire Python standard
+        # FIX pour l'erreur 'AttrDict is not JSON serializable' : convertir l'objet secret en dictionnaire standard
         creds_dict = dict(creds_json)
         
         json_string = json.dumps(creds_dict)
@@ -54,8 +54,10 @@ def load_model_urls_from_sheets():
         # Utilisation d'un objet de type fichier en mémoire (StringIO)
         creds_file_like = io.StringIO(json_string)
         
-        # gspread.service_account peut lire un chemin de fichier OU un objet de type fichier
-        gc = gspread.service_account(file_path=creds_file_like)
+        # --- CORRECTION DE L'ERREUR CLÉ ---
+        # gspread.service_account utilise 'filename' pour lire un objet de type fichier,
+        # et non 'file_path' (qui était la source de l'erreur).
+        gc = gspread.service_account(filename=creds_file_like)
         
         print("DEBUG: Connexion à Google Sheets réussie via StringIO (méthode robuste).")
         
@@ -165,7 +167,7 @@ if st.button("▶️ Démarrer le Scraping et le Repricing"):
         # 2. Boucle et appelle la fonction de scraping
         for model_name, model_url in model_urls_to_scrape:
             # Délai entre les modèles
-            time.sleep(random.uniform(2.0, 5.0)) 
+            time.sleep(SCRAPING_DELAY_SECONDS) 
             scrape_model_page(model_name, model_url, toutes_les_donnees, log_status) 
         
         log_status.update(label="Traitement final des données...", state="running", expanded=True)
