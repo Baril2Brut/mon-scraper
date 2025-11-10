@@ -3,4 +3,4 @@ gspread
 pandas
 requests
 beautifulsoup4
-gspread-dataframe  # <- C'est la nouvelle dépendance !
+gspread-dataframe
