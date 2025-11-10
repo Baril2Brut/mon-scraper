@@ -34,7 +34,6 @@ def load_model_urls_from_sheets():
     sans tenter de lire un fichier local.
     """
     
-    # --- AUTHENTIFICATION ---
     if 'gcp_service_account' not in st.secrets:
         print("DEBUG: Secret 'gcp_service_account' non trouvé dans st.secrets.")
         st.error("🛑 Erreur d'authentification: La section '[gcp_service_account]' est manquante dans secrets.toml.")
@@ -44,8 +43,8 @@ def load_model_urls_from_sheets():
         # Récupération directe de l'objet JSON (dictionnaire Python) depuis st.secrets
         creds_json = st.secrets['gcp_service_account']
         
-        # --- CORRECTION CRITIQUE ICI ---
-        # Utiliser service_account_from_dict pour créer les identifiants
+        # --- CORRECTION CRITIQUE (déjà appliquée) ---
+        # Utiliser service_account_from_dict pour créer les identifiants à partir du dictionnaire
         creds = gspread.service_account_from_dict(creds_json)
         
         # Autoriser gspread avec les identifiants
@@ -53,6 +52,7 @@ def load_model_urls_from_sheets():
         print("DEBUG: Connexion à Google Sheets réussie.")
         
     except Exception as e:
+        # Cette erreur est probablement liée au formatage de la clé.
         print(f"DEBUG: Erreur lors de l'authentification : {e}")
         st.error(f"🛑 Erreur critique d'authentification. Vérifiez le contenu de la clé de service dans secrets.toml : {e}")
         return []
