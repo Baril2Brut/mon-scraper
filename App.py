@@ -7,8 +7,7 @@ import gspread_dataframe as gd
 import pandas as pd 
 import time
 import random 
-import io 
-import json # Ajout de json ici
+# Retrait des imports inutiles comme io et json
 from typing import List, Dict, Any, Tuple
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
@@ -34,8 +33,8 @@ SCRAPING_DELAY_SECONDS = 2.0
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    Utilise la méthode robuste io.StringIO pour contourner les problèmes de formatage
-    de la clé privée dans l'environnement Streamlit.
+    Utilise la fonction gspread.service_account_from_dict(), la méthode la plus 
+    fiable pour les identifiants chargés en mémoire depuis Streamlit secrets.
     """
     
     if 'gcp_service_account' not in st.secrets:
@@ -46,24 +45,20 @@ def load_model_urls_from_sheets():
     try:
         creds_json = st.secrets['gcp_service_account']
         
-        # FIX pour l'erreur 'AttrDict is not JSON serializable' : convertir l'objet secret en dictionnaire standard
+        # Étape 1: Conversion en dictionnaire Python standard.
+        # Cela corrige l'erreur 'AttrDict is not JSON serializable' que nous avions vue.
         creds_dict = dict(creds_json)
         
-        json_string = json.dumps(creds_dict)
+        # --- CORRECTION FINALE CRITIQUE ---
+        # Utiliser la méthode native gspread pour l'authentification à partir d'un dictionnaire Python.
+        gc = gspread.service_account_from_dict(creds_dict)
         
-        # Utilisation d'un objet de type fichier en mémoire (StringIO)
-        creds_file_like = io.StringIO(json_string)
-        
-        # --- CORRECTION DE L'ERREUR CLÉ ---
-        # gspread.service_account utilise 'filename' pour lire un objet de type fichier,
-        # et non 'file_path' (qui était la source de l'erreur).
-        gc = gspread.service_account(filename=creds_file_like)
-        
-        print("DEBUG: Connexion à Google Sheets réussie via StringIO (méthode robuste).")
+        print("DEBUG: Connexion à Google Sheets réussie via service_account_from_dict.")
         
     except Exception as e:
         print(f"DEBUG: Erreur lors de l'authentification : {e}")
-        st.error(f"🛑 Erreur critique d'authentification. Veuillez vérifier que la clé privée dans secrets.toml ne contient aucun caractère invisible. Erreur : {e}")
+        # Afficher un message plus général car l'erreur est maintenant interne à gspread
+        st.error(f"🛑 Erreur critique d'authentification. Vérifiez la clé de service dans secrets.toml et les autorisations de la feuille. Erreur : {e}")
         return []
 
     # --- LECTURE DES DONNÉES ---
@@ -84,7 +79,7 @@ def load_model_urls_from_sheets():
         # Convertir en liste de tuples (MODÈLE, URL)
         model_urls_to_scrape: List[Tuple[str, str]] = list(zip(
             df[COL_MODEL].astype(str).tolist(), 
-            df[COL_URL].astype(str).tolist()
+            df[COL_URL].astype(str].tolist()
         ))
         
         return model_urls_to_scrape
