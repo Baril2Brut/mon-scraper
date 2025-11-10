@@ -11,7 +11,7 @@ import time
 from typing import List, Dict, Any, Tuple
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
-import re # Nouveau : pour le nettoyage agressif
+import re # Nécessaire pour le nettoyage agressif
 
 # --- CONFIGURATION GOOGLE SHEETS ---
 
@@ -38,6 +38,7 @@ def load_model_urls_from_sheets():
     """
     
     # --- 1. Lecture et Décodage Base64 de la Clé ---
+    # La clé est recherchée en minuscules pour correspondre au TOML standard
     if 'gcp_encoded_key' not in st.secrets:
         st.error("🛑 Clé 'gcp_encoded_key' manquante dans secrets.toml. Veuillez insérer la chaîne Base64.")
         print("DEBUG: Secret 'gcp_encoded_key' not found.")
@@ -45,12 +46,10 @@ def load_model_urls_from_sheets():
 
     encoded_key = st.secrets['gcp_encoded_key']
 
-    # CRITIQUE : Nettoyage agressif de la chaîne Base64
-    # 1. On retire les espaces blancs au début et à la fin (.strip())
-    # 2. On retire tous les caractères qui ne sont PAS des caractères Base64 valides
-    # (A-Z, a-z, 0-9, +, /, ou = pour le padding).
+    # CRITIQUE : Nettoyage agressif de la chaîne Base64 (pour gérer le 'Incorrect padding')
     try:
         cleaned_encoded_key = encoded_key.strip()
+        # On ne conserve que les caractères Base64 valides (A-Z, a-z, 0-9, +, /, et =)
         cleaned_encoded_key = re.sub(r'[^A-Za-z0-9+/=]', '', cleaned_encoded_key)
         
         # Le nettoyage doit être appliqué avant le décodage
