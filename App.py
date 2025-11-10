@@ -29,29 +29,30 @@ COL_URL = 'URL'
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    Mise à jour pour lire l'objet JSON directement depuis st.secrets.
+    Utilise st.secrets pour lire la clé de service GCP comme un dictionnaire.
+    CORRECTION: Utilise gspread.service_account_from_dict() pour autoriser gspread
+    sans tenter de lire un fichier local.
     """
     
     # --- AUTHENTIFICATION ---
-    # La clé est maintenant attendue dans st.secrets['gcp_service_account'] comme un objet
     if 'gcp_service_account' not in st.secrets:
         print("DEBUG: Secret 'gcp_service_account' non trouvé dans st.secrets.")
         st.error("🛑 Erreur d'authentification: La section '[gcp_service_account]' est manquante dans secrets.toml.")
         return []
     
     try:
-        # Récupération directe de l'objet JSON (dictionnaire Python)
+        # Récupération directe de l'objet JSON (dictionnaire Python) depuis st.secrets
         creds_json = st.secrets['gcp_service_account']
         
-        # Connexion à Google Sheets via les identifiants
-        # gspread gère la conversion du dict en objet Credentials
+        # --- CORRECTION CRITIQUE ICI ---
+        # Utiliser service_account_from_dict pour créer les identifiants
         creds = gspread.service_account_from_dict(creds_json)
         
+        # Autoriser gspread avec les identifiants
         gc = gspread.authorize(creds)
         print("DEBUG: Connexion à Google Sheets réussie.")
         
     except Exception as e:
-        # Erreur si les identifiants ne sont pas valides, même au format TOML
         print(f"DEBUG: Erreur lors de l'authentification : {e}")
         st.error(f"🛑 Erreur critique d'authentification. Vérifiez le contenu de la clé de service dans secrets.toml : {e}")
         return []
@@ -62,7 +63,6 @@ def load_model_urls_from_sheets():
         wks = gc.open_by_id(SPREADSHEET_ID).worksheet(SHEET_NAME)
         
         # Lire les données dans un DataFrame
-        # La fonction gd.get_as_dataframe est plus robuste que wks.get_all_records()
         df = gd.get_as_dataframe(wks, usecols=[COL_MODEL, COL_URL], header=0)
         
         # Nettoyage et filtrage
