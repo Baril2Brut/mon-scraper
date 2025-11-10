@@ -46,10 +46,8 @@ def load_model_urls_from_sheets():
         creds_json = st.secrets['gcp_service_account']
         
         # Étape 1: Conversion en dictionnaire Python standard.
-        # Cela corrige l'erreur 'AttrDict is not JSON serializable' que nous avions vue.
         creds_dict = dict(creds_json)
         
-        # --- CORRECTION FINALE CRITIQUE ---
         # Utiliser la méthode native gspread pour l'authentification à partir d'un dictionnaire Python.
         gc = gspread.service_account_from_dict(creds_dict)
         
@@ -79,7 +77,7 @@ def load_model_urls_from_sheets():
         # Convertir en liste de tuples (MODÈLE, URL)
         model_urls_to_scrape: List[Tuple[str, str]] = list(zip(
             df[COL_MODEL].astype(str).tolist(), 
-            df[COL_URL].astype(str].tolist()
+            df[COL_URL].astype(str).tolist() # <-- CORRECTION DE LA PARENTHÈSE ICI
         ))
         
         return model_urls_to_scrape
