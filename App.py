@@ -3,15 +3,12 @@
 # =================================================================
 import streamlit as st
 import gspread 
-import json
-import base64
 import gspread_dataframe as gd 
 import pandas as pd 
 import time
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 # Le fichier scraper_iphone.py doit être dans le même dossier !
 from scraper_iphone import scrape_model_page, export_to_csv 
-import re # Nécessaire pour le nettoyage agressif
 
 # --- CONFIGURATION GOOGLE SHEETS ---
 
@@ -28,47 +25,22 @@ COL_URL = 'URL'
 SCRAPING_DELAY_SECONDS = 2.0
 
 
-# --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS (AVEC gspread-dataframe) ---
+# --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS (VERSION SIMPLIFIÉE) ---
 
 @st.cache_data(ttl=600, show_spinner="Chargement et vérification des liens depuis Google Sheets...") 
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    Utilise la clé de service encodée en Base64 depuis st.secrets.
+    Utilise la clé de service depuis st.secrets.
     """
     
-    # --- 1. Lecture et Décodage Base64 de la Clé ---
-    # La clé est recherchée en minuscules pour correspondre au TOML standard
-    if 'gcp_encoded_key' not in st.secrets:
-        st.error("🛑 Clé 'gcp_encoded_key' manquante dans secrets.toml. Veuillez insérer la chaîne Base64.")
-        print("DEBUG: Secret 'gcp_encoded_key' not found.")
-        return []
-
-    encoded_key = st.secrets['gcp_encoded_key']
-
-    # CRITIQUE : Nettoyage agressif de la chaîne Base64 (pour gérer le 'Incorrect padding')
-    try:
-        cleaned_encoded_key = encoded_key.strip()
-        # On ne conserve que les caractères Base64 valides (A-Z, a-z, 0-9, +, /, et =)
-        cleaned_encoded_key = re.sub(r'[^A-Za-z0-9+/=]', '', cleaned_encoded_key)
-        
-        # Le nettoyage doit être appliqué avant le décodage
-        service_account_info_bytes = base64.b64decode(cleaned_encoded_key)
-        
-        # Décodage des bytes en chaîne JSON, puis chargement en dictionnaire Python
-        service_account_info_str = service_account_info_bytes.decode('utf-8')
-        creds_dict = json.loads(service_account_info_str)
-        
-        print("DEBUG: Clé de service décodée avec succès. Tentative d'authentification...")
-
-    except base64.binascii.Error as e:
-        # Affiche la longueur nettoyée pour le débogage si l'erreur persiste
-        st.error(f"🛑 Erreur critique d'authentification. L'encodage Base64 est corrompu (Incorrect padding). Longueur de la chaîne nettoyée: {len(cleaned_encoded_key)}")
-        print(f"ERROR: Base64 decoding failed. Error: {e}")
-        return []
-    except Exception as e:
-        st.error(f"🛑 Erreur de décodage JSON ou Base64 inattendue. Erreur : {e}")
-        print(f"ERROR: Unexpected decoding error. {e}")
+    # --- 1. Lecture de la clé depuis secrets ---
+    if 'gcp_service_account' in st.secrets:
+        creds_dict = dict(st.secrets['gcp_service_account'])
+        print("DEBUG: Clé de service chargée avec succès depuis gcp_service_account.")
+    else:
+        st.error("🛑 Configuration 'gcp_service_account' manquante dans secrets.toml")
+        print("ERROR: 'gcp_service_account' not found in secrets.")
         return []
 
     # --- 2. Authentification gspread ---
@@ -196,10 +168,24 @@ if st.sidebar.button("⚙️ Lancer le Scraping"):
             log_status.error("❌ Échec de la génération du CSV. Le scraping n'a retourné aucune donnée.")
             
 # Interface par défaut
-if 'gcp_encoded_key' not in st.secrets:
+if 'gcp_service_account' not in st.secrets:
     st.title("🤖 Scraper de Catalogue Pièces Détachées (Configuration requise)")
-    st.warning("Veuillez configurer votre clé de service Google dans le fichier `.streamlit/secrets.toml` sous la clé `gcp_encoded_key` pour démarrer.")
-    st.code('gcp_encoded_key = "VOTRE_CHAINE_BASE64_COMPLETE"')
+    st.warning("Veuillez configurer votre clé de service Google dans le fichier `.streamlit/secrets.toml`")
+    st.markdown("### Format requis dans secrets.toml :")
+    st.code('''[gcp_service_account]
+type = "service_account"
+project_id = "votre-project-id"
+private_key_id = "votre-private-key-id"
+private_key = """-----BEGIN PRIVATE KEY-----
+...votre clé privée...
+-----END PRIVATE KEY-----"""
+client_email = "votre-email@project.iam.gserviceaccount.com"
+client_id = "votre-client-id"
+auth_uri = "https://accounts.google.com/o/oauth2/auth"
+token_uri = "https://oauth2.googleapis.com/token"
+auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/..."
+universe_domain = "googleapis.com"''', language='toml')
 elif st.session_state.get('scraped', False) is False:
     st.title("🤖 Scraper de Catalogue Pièces Détachées")
     st.info("Cliquez sur **Lancer le Scraping** dans la barre latérale pour démarrer le processus.")
