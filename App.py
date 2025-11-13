@@ -34,13 +34,23 @@ def load_model_urls_from_sheets():
     Utilise la clé de service depuis st.secrets.
     """
     
-    # --- 1. Lecture de la clé depuis secrets ---
-    if 'gcp_service_account' in st.secrets:
-        creds_dict = dict(st.secrets['gcp_service_account'])
-        print("DEBUG: Clé de service chargée avec succès depuis gcp_service_account.")
-    else:
-        st.error("🛑 Configuration 'gcp_service_account' manquante dans secrets.toml")
-        print("ERROR: 'gcp_service_account' not found in secrets.")
+    # --- 1. Lecture et Décodage Base64 de la Clé ---
+    if 'gcp_encoded_key' not in st.secrets:
+        st.error("🛑 Clé 'gcp_encoded_key' manquante dans secrets.toml")
+        print("ERROR: Secret 'gcp_encoded_key' not found.")
+        return []
+
+    encoded_key = st.secrets['gcp_encoded_key']
+
+    try:
+        # Décodage Base64
+        service_account_info_bytes = base64.b64decode(encoded_key)
+        service_account_info_str = service_account_info_bytes.decode('utf-8')
+        creds_dict = json.loads(service_account_info_str)
+        print("DEBUG: Clé de service décodée avec succès.")
+    except Exception as e:
+        st.error(f"🛑 Erreur de décodage. Erreur : {e}")
+        print(f"ERROR: Decoding error. {e}")
         return []
 
     # --- 2. Authentification gspread ---
