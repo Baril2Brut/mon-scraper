@@ -180,7 +180,7 @@ if st.sidebar.button("⚙️ Lancer le Scraping"):
             log_status.error("❌ Échec de la génération du CSV. Le scraping n'a retourné aucune donnée.")
             
 # Interface par défaut
-if 'gcp_service_account' not in st.secrets:
+if 'gcp_encoded_key' not in st.secrets:
     st.title("🤖 Scraper de Catalogue Pièces Détachées (Configuration requise)")
     st.warning("Veuillez configurer votre clé de service Google dans le fichier `.streamlit/secrets.toml`")
     st.markdown("### Format requis dans secrets.toml :")
