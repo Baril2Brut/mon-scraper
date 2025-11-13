@@ -2,7 +2,9 @@
 # Fichier: app.py (Interface Streamlit et Connexion Sheets)
 # =================================================================
 import streamlit as st
-import gspread 
+import gspread
+import json
+import base64
 import gspread_dataframe as gd 
 import pandas as pd 
 import time
