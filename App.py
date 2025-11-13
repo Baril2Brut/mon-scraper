@@ -1,138 +1,224 @@
 # =================================================================
-# Fichier: scraper_iphone.py (Contient la logique pure du scraping)
+# Fichier: App.py (Interface Streamlit et Connexion Sheets)
 # =================================================================
-
-import requests
-from bs4 import BeautifulSoup
-import re
-import math
-import random 
+import streamlit as st
+import gspread 
+import gspread_dataframe as gd 
+import pandas as pd 
 import time
-from typing import List, Dict, Any, Tuple
+import math # Nécessaire pour math.ceil
+from typing import List, Dict, Any
 
-# SÉLECTEUR DE PRODUIT CONFIRMÉ
-PRODUCT_CONTAINER_SELECTOR: str = 'div.cadre_prod'
+# Importe la logique du scraper
+from scraper_iphone import scrape_model_page, apply_repricing 
 
-# URL de base du site
-BASE_URL: str = "http://www.visiodirect-mobile.com"
+# --- CONFIGURATION GOOGLE SHEETS ---
+
+# ID de votre feuille de calcul (extrait de l'URL)
+SPREADSHEET_ID = "1RQCsS2G_N-KQ-TzuEdY7f3X_7shXhm7w2AjPwaESe84" 
+# Nom de l'onglet SOURCE pour les liens (Configuration_Liens_Scraper)
+SHEET_NAME_CONFIG = "Configuration_Liens_Scraper" 
+# Nom de l'onglet CIBLE pour les résultats (Resultats_Scraping_iPhone_Automatise)
+SHEET_NAME_RESULTS = "Resultats_Scraping_iPhone_Automatise" 
+
+# Noms de colonnes cibles dans l'onglet de configuration
+COL_MODEL = 'MODELE'
+COL_URL = 'URL'
+
+# Délais de scraping (pour être plus doux avec le site)
+SCRAPING_DELAY_SECONDS = 2.0
 
 
-# --- FONCTIONS UTILITAIRES ---
+# --- FONCTIONS DE CONNEXION ET DE LECTURE ---
 
-def clean_price(price_raw: str) -> float:
-    """Nettoie une chaîne de prix pour la convertir en nombre flottant (float)."""
-    if price_raw == "N/A": return 0.0
-    # Suppression du point (séparateur de milliers) avant de remplacer la virgule par un point (séparateur décimal)
-    cleaned_price = price_raw.lower().replace('€', '').replace('ttc', '').replace('.', '').replace(',', '.').strip()
-    try: 
-        return float(cleaned_price)
-    except ValueError: 
-        print(f"ATTENTION: Prix non convertible ('{price_price}')")
-        return 0.0
+@st.cache_data(ttl=600, show_spinner="Chargement et vérification des liens depuis Google Sheets...") 
+def load_model_urls_from_sheets():
+    """
+    Se connecte à Google Sheets et charge la liste des URLs à scraper.
+    """
+    try:
+        # --- 1. Lecture directe depuis secrets ---
+        if 'gcp_service_account' not in st.secrets:
+            st.error("🛑 Configuration 'gcp_service_account' manquante dans secrets.toml ou interface Secrets.")
+            return []
 
-def get_soup(url: str, max_retries: int = 3) -> BeautifulSoup | None:
-    """Tente de récupérer et parser une URL avec gestion d'erreurs."""
-    # Simuler un navigateur pour éviter le blocage
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url, headers=headers, timeout=15)
-            response.raise_for_status() # Lève une exception pour les codes d'erreur HTTP (4xx ou 5xx)
-            return BeautifulSoup(response.content, 'html.parser')
-        except requests.exceptions.RequestException as e:
-            print(f"Erreur de requête pour {url} (Tentative {attempt + 1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2 + random.uniform(0, 1)) # Attente aléatoire avant de réessayer
-    return None
+        creds_dict = dict(st.secrets['gcp_service_account'])
+        gc = gspread.service_account_from_dict(creds_dict)
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        
+        # Ouvre la feuille de configuration
+        ws = sh.worksheet(SHEET_NAME_CONFIG)
+        
+        # Récupère toutes les données (en tant que DataFrame pour le nettoyage)
+        df = gd.get_as_dataframe(ws).dropna(subset=[COL_MODEL, COL_URL]).reset_index(drop=True)
+        
+        # Vérification des colonnes nécessaires
+        if COL_MODEL not in df.columns or COL_URL not in df.columns:
+            st.error(f"Colonnes '{COL_MODEL}' ou '{COL_URL}' manquantes dans l'onglet '{SHEET_NAME_CONFIG}'.")
+            return []
+            
+        # Transforme le DataFrame en liste de tuples (modèle, URL)
+        urls_to_scrape = list(zip(df[COL_MODEL], df[COL_URL]))
+        
+        print(f"DEBUG: {len(urls_to_scrape)} liens chargés depuis Sheets.")
+        return urls_to_scrape
 
-def scrape_model_page(model_name: str, url: str) -> List[Dict[str, Any]]:
-    """Scrape tous les composants sur une page donnée et retourne les données brutes."""
-    
-    soup = get_soup(url)
-    if soup is None:
-        print(f"🛑 Échec du scraping de la page pour le modèle {model_name}.")
+    except Exception as e:
+        # L'erreur Base64 se manifeste souvent ici
+        st.error(f"🛑 Échec de la connexion à Google Sheets. Vérifiez la clé secrète et les autorisations. Erreur : {e}")
         return []
 
-    data = []
-    
-    # Trouver tous les conteneurs de produits
-    product_containers = soup.select(PRODUCT_CONTAINER_SELECTOR)
-    
-    for container in product_containers:
-        # 1. Nom du composant et référence
-        # Le nom est souvent dans un <a> ou un <h3>/<h4>, on prend le plus lisible
-        name_tag = container.select_one('h3 a, h4 a, .nom_prod a')
-        name_text = name_tag.text.strip() if name_tag else "N/A"
-        
-        # Référence (souvent difficile à extraire proprement)
-        ref_match = re.search(r'\(Ref: (.*?)\)', name_text)
-        reference = ref_match.group(1).strip() if ref_match else "N/A"
-        
-        # Nettoyer le nom du composant
-        nom_composant = re.sub(r'\(Ref: .*?\)', '', name_text).strip()
-        
-        # 2. Prix
-        price_tag = container.select_one('.prix_prod')
-        price_raw = price_tag.text.strip() if price_tag else "N/A"
-        
-        # 3. Lien (URL absolue)
-        link_tag = container.select_one('.nom_prod a')
-        relative_link = link_tag.get('href') if link_tag else None
-        
-        full_link = BASE_URL + relative_link if relative_link and not relative_link.startswith(BASE_URL) else relative_link
-        
-        # Conversion du prix brut en float pour les calculs futurs
-        price_float = clean_price(price_raw)
-        
-        # Assemblage des données brutes
-        item = {
-            'marque_modele': model_name,
-            'nom_composant': nom_composant,
-            'reference': reference,
-            'price_raw': price_raw,      # Prix brut (pour l'historique)
-            'price_float': price_float,  # Prix nettoyé (pour le calcul)
-            'link': full_link if full_link else url
-        }
-        data.append(item)
-        
-    print(f"✅ Modèle '{model_name}': {len(data)} produits trouvés.")
-    return data
 
-def apply_repricing(data: List[Dict[str, Any]], marge_brute: float, frais_fixes_mo: float, tva_coefficient: float) -> List[Dict[str, Any]]:
-    """Applique la logique de Repricing et formate les colonnes finales."""
+# --- FONCTION D'ÉCRITURE DES RÉSULTATS DANS SHEETS ---
+
+def save_results_to_sheets(
+    data: List[Dict[str, Any]], 
+    marge_brute: float, 
+    frais_fixes_mo: float, 
+    tva_coefficient: float
+) -> bool:
+    """
+    Effectue le Repricing, formate les données, et écrit le résultat dans l'onglet Google Sheets cible.
+    """
     if not data:
-        return []
+        st.warning("Aucune donnée à enregistrer.")
+        return False
+        
+    # --- 1. Repricing et Formatage ---
+    # La fonction apply_repricing est maintenant dans scraper_iphone.py
+    processed_data = apply_repricing(data, marge_brute, frais_fixes_mo, tva_coefficient)
+    if not processed_data:
+        st.warning("Aucune donnée formatée après Repricing.")
+        return False
+        
+    df = pd.DataFrame(processed_data)
 
-    # 1. Conversion en DataFrame pour les calculs massifs
-    import pandas as pd
-    df = pd.DataFrame(data)
+    # --- 2. Écriture dans Google Sheets ---
+    try:
+        creds_dict = dict(st.secrets['gcp_service_account'])
+        gc = gspread.service_account_from_dict(creds_dict)
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        
+        # Ouvre la feuille cible (ou la crée si elle n'existe pas)
+        try:
+            ws = sh.worksheet(SHEET_NAME_RESULTS)
+        except gspread.exceptions.WorksheetNotFound:
+            # Crée l'onglet si non trouvé
+            ws = sh.add_worksheet(title=SHEET_NAME_RESULTS, rows="1000", cols="20")
+            
+        # Écrit le DataFrame dans la feuille de calcul (remplace le contenu existant)
+        gd.set_with_dataframe(ws, df)
+        print(f"DEBUG: Écriture des {len(df)} lignes réussie dans '{SHEET_NAME_RESULTS}'.")
+        return True
 
-    # 2. Calculs de Repricing
-    df['Prix Fournisseur HT'] = df['price_float'].round(2)
-    df['Marge Brute HT'] = (df['Prix Fournisseur HT'] * marge_brute).round(2)
-    df['Prix Intermédiaire + M.O. HT'] = (df['Marge Brute HT'] + frais_fixes_mo).round(2)
+    except Exception as e:
+        st.error(f"🛑 Échec de l'enregistrement dans Google Sheets : {e}")
+        print(f"ERROR: Failed to save to Sheets: {e}")
+        return False
+
+
+# --- INTERFACE STREAMLIT PRINCIPALE ---
+
+st.set_page_config(page_title="Scraper Automatique & Repricing", layout="wide")
+
+# Interface par défaut (affichage de l'erreur si la clé manque)
+if 'gcp_service_account' not in st.secrets:
+    st.title("🤖 Scraper de Catalogue Pièces Détachées (Configuration requise)")
+    st.error("Veuillez configurer votre clé de service Google dans l'interface Secrets de Streamlit Cloud.")
+    st.markdown("### ⚠️ Clé de service manquante. L'application ne peut pas se connecter à Google Sheets.")
+    st.stop()
     
-    # Arrondi au supérieur (ceiling) pour le prix Client TTC
-    df['Prix Client TTC'] = (df['Prix Intermédiaire + M.O. HT'] * tva_coefficient).apply(math.ceil)
+# Si la clé est présente, afficher l'interface principale
+st.title("⚙️ Outil d'Automatisation de Repricing")
+st.markdown("Scraping en direct de **Visiodirect-Mobile** et écriture automatique dans Google Sheets.")
+
+# --- BARRE LATÉRALE DE PARAMÈTRES ---
+with st.sidebar:
+    st.header("Paramètres de Repricing")
+    st.info("Ces valeurs sont utilisées pour calculer le **Prix Client TTC**.")
+
+    # 1. Marge brute HT (coefficient)
+    marge_brute = st.number_input(
+        "Coefficient de Marge Brute (Ex: 1.6 pour +60%)",
+        min_value=1.0,
+        value=1.6,
+        step=0.05,
+        format="%.2f",
+        key="marge_brute_input"
+    )
+
+    # 2. Frais fixes de Main d'Œuvre (montant)
+    frais_mo = st.number_input(
+        "Frais Fixes / Main d'Œuvre HT (€)",
+        min_value=0.0,
+        value=20.0,
+        step=5.0,
+        format="%.2f",
+        key="frais_mo_input"
+    )
     
-    # 3. Nettoyage et Renommage
-    df = df.drop(columns=['price_float', 'price_raw'])
-    df = df.rename(columns={'marque_modele': 'MODELE', 'nom_composant': 'NOM_COMPOSANT', 'link': 'URL_SOURCE'})
+    # 3. TVA (coefficient)
+    tva_coeff = st.number_input(
+        "Coefficient de TVA (Ex: 1.2 pour 20%)",
+        min_value=1.0,
+        value=1.2,
+        step=0.01,
+        format="%.2f",
+        key="tva_coeff_input"
+    )
+
+# --- EXECUTION ---
+
+if st.button("🚀 LANCER LE SCRAPING & L'ENREGISTREMENT"):
     
-    # 4. Réorganisation des colonnes
-    fieldnames = [
-        'MODELE', 
-        'NOM_COMPOSANT', 
-        'reference', 
-        'Prix Fournisseur HT', 
-        'Marge Brute HT', 
-        'Prix Intermédiaire + M.O. HT', 
-        'Prix Client TTC', 
-        'URL_SOURCE'
-    ]
-    df = df.reindex(columns=fieldnames)
+    # 1. Chargement des liens
+    urls_to_scrape = load_model_urls_from_sheets()
+
+    if not urls_to_scrape:
+        st.error("Le scraping ne peut pas démarrer sans une liste de liens valide.")
+        st.stop()
+        
+    log_status = st.empty()
+    log_status.info(f"Démarrage du scraping de **{len(urls_to_scrape)}** modèles...")
+
+    toutes_les_donnees: List[Dict[str, Any]] = []
     
-    # 5. Conversion finale en liste de dictionnaires
-    return df.to_dict('records')
+    # 2. Scraping par modèle
+    for i, (model_name, url) in enumerate(urls_to_scrape):
+        log_status.progress((i + 1) / len(urls_to_scrape), text=f"Scraping en cours... Modèle **{model_name}** ({i + 1}/{len(urls_to_scrape)})")
+        
+        # Scrape la page et récupère la liste de produits
+        products = scrape_model_page(model_name, url)
+        toutes_les_donnees.extend(products)
+        
+        # Pause pour respecter le délai
+        if i < len(urls_to_scrape) - 1:
+            time.sleep(SCRAPING_DELAY_SECONDS)
+
+    # 3. Enregistrement des résultats dans Google Sheets
+    log_status.info(f"✅ Scraping terminé. {len(toutes_les_donnees)} produits bruts collectés. Enregistrement en cours...")
+
+    # Utilisation de la nouvelle fonction save_results_to_sheets
+    if save_results_to_sheets(toutes_les_donnees, marge_brute, frais_mo, tva_coeff):
+        
+        # 4. Affichage du lien final et du succès
+        # On pourrait ajouter un bouton pour ouvrir directement la feuille de résultats
+        st.balloons()
+        log_status.success(f"🎉 Processus terminé ! **{len(toutes_les_donnees)}** composants enregistrés dans l'onglet **'{SHEET_NAME_RESULTS}'** de Google Sheets.")
+        
+        # Lien vers la feuille
+        sheet_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit#gid=" # L'URL ouvre l'ID principal
+        st.markdown(f"**[Cliquez ici pour voir les résultats dans Google Sheets]({sheet_url})**")
+        
+        # Affichage d'un aperçu
+        if toutes_les_donnees:
+            st.subheader("Aperçu des Données Enregistrées")
+            # Le DataFrame est créé et formaté dans save_results_to_sheets.
+            # On le recrée ici pour l'affichage uniquement (moins coûteux que l'appel Sheets)
+            df_preview = pd.DataFrame(apply_repricing(toutes_les_donnees, marge_brute, frais_mo, tva_coeff))
+            st.dataframe(df_preview, use_container_width=True)
+            
+    else:
+        # L'erreur est déjà affichée par la fonction save_results_to_sheets
+        log_status.error("❌ Échec de l'enregistrement final dans Google Sheets.")
 
