@@ -2,7 +2,7 @@
 # Fichier: app.py (Interface Streamlit et Connexion Sheets)
 # =================================================================
 import streamlit as st
-import gspread
+import gspread 
 import json
 import base64
 import gspread_dataframe as gd 
@@ -27,33 +27,23 @@ COL_URL = 'URL'
 SCRAPING_DELAY_SECONDS = 2.0
 
 
-# --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS (VERSION SIMPLIFIÉE) ---
+# --- FONCTION DE LECTURE DES LIENS DEPUIS SHEETS ---
 
 @st.cache_data(ttl=600, show_spinner="Chargement et vérification des liens depuis Google Sheets...") 
 def load_model_urls_from_sheets():
     """
     Se connecte à Google Sheets et charge la liste des URLs à scraper.
-    Utilise la clé de service depuis st.secrets.
+    Utilise la clé de service depuis st.secrets directement.
     """
     
-    # --- 1. Lecture et Décodage Base64 de la Clé ---
-    if 'gcp_encoded_key' not in st.secrets:
-        st.error("🛑 Clé 'gcp_encoded_key' manquante dans secrets.toml")
-        print("ERROR: Secret 'gcp_encoded_key' not found.")
+    # --- 1. Lecture directe depuis secrets ---
+    if 'gcp_service_account' not in st.secrets:
+        st.error("🛑 Configuration 'gcp_service_account' manquante dans secrets.toml")
+        print("ERROR: 'gcp_service_account' not found in secrets.")
         return []
 
-    encoded_key = st.secrets['gcp_encoded_key']
-
-    try:
-        # Décodage Base64
-        service_account_info_bytes = base64.b64decode(encoded_key)
-        service_account_info_str = service_account_info_bytes.decode('utf-8')
-        creds_dict = json.loads(service_account_info_str)
-        print("DEBUG: Clé de service décodée avec succès.")
-    except Exception as e:
-        st.error(f"🛑 Erreur de décodage. Erreur : {e}")
-        print(f"ERROR: Decoding error. {e}")
-        return []
+    creds_dict = dict(st.secrets['gcp_service_account'])
+    print("DEBUG: Clé de service chargée avec succès.")
 
     # --- 2. Authentification gspread ---
     try:
@@ -180,19 +170,17 @@ if st.sidebar.button("⚙️ Lancer le Scraping"):
             log_status.error("❌ Échec de la génération du CSV. Le scraping n'a retourné aucune donnée.")
             
 # Interface par défaut
-if 'gcp_encoded_key' not in st.secrets:
+if 'gcp_service_account' not in st.secrets:
     st.title("🤖 Scraper de Catalogue Pièces Détachées (Configuration requise)")
     st.warning("Veuillez configurer votre clé de service Google dans le fichier `.streamlit/secrets.toml`")
     st.markdown("### Format requis dans secrets.toml :")
     st.code('''[gcp_service_account]
 type = "service_account"
-project_id = "votre-project-id"
-private_key_id = "votre-private-key-id"
-private_key = """-----BEGIN PRIVATE KEY-----
-...votre clé privée...
------END PRIVATE KEY-----"""
-client_email = "votre-email@project.iam.gserviceaccount.com"
-client_id = "votre-client-id"
+project_id = "neat-coast-477411-d3"
+private_key_id = "bf44d2fc146e43cd8a83626e7397bb70815f9640"
+private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+client_email = "streamlit-scraper@neat-coast-477411-d3.iam.gserviceaccount.com"
+client_id = "116756110476535771227"
 auth_uri = "https://accounts.google.com/o/oauth2/auth"
 token_uri = "https://oauth2.googleapis.com/token"
 auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
